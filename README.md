@@ -16,3 +16,4 @@ python WebApp/app.py
     - Name : selenium_events
     - Index pattern : selenium-events*
     - Timestamp field : @timestamp
+- Discover
