@@ -17,3 +17,5 @@ python WebApp/app.py
     - Index pattern : selenium-events*
     - Timestamp field : @timestamp
 - Discover
+  - Filters
+    - `raw : "*\"found\":false*"`
