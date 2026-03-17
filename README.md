@@ -3,9 +3,9 @@
 
 ```
 docker compose up -d
-python LogServer/main.py
-python LogWorker/main.py
-python WebApp/app.py
+python3 LogServer/main.py
+python3 LogWorker/main.py
+python3 WebApp/app.py
 ```
 
 
