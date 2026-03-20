@@ -16,7 +16,7 @@ chmod +x manage.sh
   - The `tracker.js` testing grounds become visible at: `http://localhost:8081`
   - Kibana's visualization dashboard comes online at: `http://localhost:5601`
 
-To generate some random data use `python3 slelenium_test.py`
+To generate some random data use `python3 selenium_test.py`
 
 To stop all Docker containers and python processes use `./manage.sh stop`
 
