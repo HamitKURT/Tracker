@@ -1,32 +1,68 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-
-    <title>Selenium Tracker Test</title>
-
-    <script src="/static/tracker.js"></script>
-
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tracker Demonstration</title>
+    <!-- Tracker script included -->
+    <script src="/static/tracker.js" defer></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background-color: #f4f4f9; color: #333; }
+        .container { max-width: 600px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #0056b3; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"], input[type="password"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { width: 100%; padding: 10px; background-color: #0056b3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 10px; }
+        button:hover { background-color: #004494; }
+        .test-section { margin-top: 30px; border-top: 1px solid #ccc; padding-top: 20px; }
+        .error-btn { background-color: #dc3545; }
+        .error-btn:hover { background-color: #c82333; }
+        .hidden-element { visibility: hidden; }
+    </style>
 </head>
-
 <body>
 
-<h1>Selenium Tracker Test Page</h1>
+<div class="container">
+    <h1>Tracker App Login</h1>
+    <p style="text-align: center; color: #666;">Perform actions to generate telemetry data.</p>
+    
+    <div class="form-group">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" placeholder="Enter test username">
+    </div>
 
-<form>
+    <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" placeholder="Enter test password">
+    </div>
 
-    <label>Username</label><br>
-    <input id="username" name="username"><br><br>
+    <button id="login" onclick="simulateLogin()">Simulate Login</button>
 
-    <label>Password</label><br>
-    <input id="password" type="password" name="password"><br><br>
+    <div class="test-section">
+        <h3>Feature Tests</h3>
+        <button id="testButton">Normal Interaction Click</button>
+        <button id="errorGenerator" class="error-btn" onclick="generateError()">Trigger JS Error</button>
+        <p>Switch tabs to trigger visibility change events.</p>
+        <a href="/dashboard">Navigate to Another Page</a>
+    </div>
+</div>
 
-    <button id="login">Login</button>
+<script>
+    function simulateLogin() {
+        const user = document.getElementById("username").value;
+        // querySelector trigger for tracker
+        const btn = document.querySelector("#login"); 
+        
+        console.log("Simulated login for:", user);
+        alert("Simulated login check network log!");
+    }
 
-</form>
-
-<br>
-
-<button id="testButton">Test Button</button>
+    function generateError() {
+        // This will throw a reference error to test our window.onerror tracker
+        undefinedFunctionThatCausesError();
+    }
+</script>
 
 </body>
 </html>
