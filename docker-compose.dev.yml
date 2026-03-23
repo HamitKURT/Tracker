@@ -5,7 +5,7 @@ services:
     networks:
       - tracker-net
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -18,53 +18,84 @@ services:
     container_name: elasticsearch
     environment:
       - discovery.type=single-node
-      - xpack.security.enabled=false
-      - xpack.security.http.ssl.enabled=false # Disable SSL for local testing
-      - ELASTIC_PASSWORD=changeme
-      - KIBANA_PASSWORD=changeme
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.enrollment.enabled=true
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - "ES_JAVA_OPTS=-Xms1g -Xmx6g"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9200 || exit 1"]
+      test: ["CMD-SHELL", "curl -s -k -u elastic:${ELASTIC_PASSWORD} http://localhost:9200/_cluster/health || exit 1"]
       interval: 10s
-      retries: 10
-      timeout: 5s
+      retries: 20
+      timeout: 10s
+      start_period: 60s
     networks:
       - tracker-net
     ports:
-      - "9200:9200"
+      - "${ELASTICSEARCH_PORT:-9200}:9200"
+    #mem_limit: 2g
 
-  kibana:
-    image: docker.elastic.co/kibana/kibana:8.12.0
-    container_name: kibana
-    restart: on-failure
-    ports:
-      - "5601:5601"
+  es-init:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    container_name: es-init
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "Waiting for Elasticsearch to be fully ready...";
+        until curl -s -k -u elastic:${ELASTIC_PASSWORD} "http://elasticsearch:9200/_cluster/health" | grep -q '"status":"green"\|"status":"yellow"'; do sleep 5; done;
+        echo "Elasticsearch is ready. Waiting for security index...";
+        sleep 30;
+        echo "Setting kibana_system password...";
+        curl -s -k -u elastic:${ELASTIC_PASSWORD} -X PUT "http://elasticsearch:9200/_security/user/kibana_system/_password" \
+          -H "Content-Type: application/json" \
+          -d '{"password":"'${ELASTIC_PASSWORD}'"}';
+        echo "";
+        echo "Kibana_system user configured successfully!";
     environment:
-      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
-      - ELASTICSEARCH_USERNAME=kibana_system
-      - ELASTICSEARCH_PASSWORD=changeme
-      - xpack.security.enabled=false
-    healthcheck:
-        test: ["CMD", "curl", "-f", "http://localhost:5601/api/status"]
-        interval: 10s
-        retries: 30
-        start_period: 5s
-        timeout: 5s
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
     networks:
       - tracker-net
     depends_on:
       elasticsearch:
         condition: service_healthy
 
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.0
+    container_name: kibana
+    restart: on-failure
+    ports:
+      - "${KIBANA_PORT:-5601}:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=["http://elasticsearch:9200"]
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD}
+      - XPACK_SECURITY_ENABLED=true
+    healthcheck:
+        test: ["CMD", "curl", "-f", "http://localhost:5601/api/status"]
+        interval: 15s
+        retries: 120
+        start_period: 120s
+        timeout: 10s
+    networks:
+      - tracker-net
+    depends_on:
+      es-init:
+        condition: service_completed_successfully
+
   kibana_deployer:
     image: python:alpine
     container_name: kibana_deployer
+    restart: on-failure
     depends_on:
       kibana:
         condition: service_healthy
     volumes:
       - ./kibana_deployer:/app
     working_dir: /app
+    environment:
+      - KIBANA_URL=http://kibana:5601
+      - KIBANA_USERNAME=elastic
+      - KIBANA_PASSWORD=${ELASTIC_PASSWORD}
     command: >
       sh -c "
       pip install requests &&
@@ -82,10 +113,15 @@ services:
       networks:
       - tracker-net
       ports:
-        - "9000:9000"
+        - "${LOG_SERVER_PORT:-8084}:${LOG_SERVER_PORT:-8084}"
       depends_on:
-        kibana:
+        redis:
           condition: service_healthy
+      environment:
+        - REDIS_HOST=${REDIS_HOST:-redis}
+        - REDIS_PORT=${REDIS_PORT:-6379}
+        - PORT=${LOG_SERVER_PORT:-8084}
+        - HOST=0.0.0.0
       entrypoint: python3 /app/main.py
 
   log-worker:
@@ -101,6 +137,15 @@ services:
           condition: service_healthy
         redis:
           condition: service_healthy
+      environment:
+        - REDIS_HOST=${REDIS_HOST:-redis}
+        - REDIS_PORT=${REDIS_PORT:-6379}
+        - ES_HOST=http://elasticsearch:9200
+        - ES_USER=elastic
+        - ES_PASSWORD=${ELASTIC_PASSWORD}
+        - ES_INDEX=${ES_INDEX:-selenium-events}
+        - BATCH_SIZE=${BATCH_SIZE:-50}
+        - MAX_WAIT_TIME=${MAX_WAIT_TIME:-2.0}
       entrypoint: python3 /app/main.py
 
   web-app:
@@ -112,9 +157,15 @@ services:
       networks:
       - tracker-net
       ports:
-        - "8081:8081"
+        - "${WEB_APP_PORT:-8081}:${WEB_APP_PORT:-8081}"
       depends_on:
-        - log-worker
+        log-worker:
+          condition: service_started
+      environment:
+        - PORT=${WEB_APP_PORT:-8081}
+        - HOST=0.0.0.0
+        - API_PORT=${LOG_SERVER_PORT:-8084}
+        - WEB_APP_URL=http://localhost:${WEB_APP_PORT:-8081}
       entrypoint: python3 /app/app.py
 
   selenium-test:
@@ -126,7 +177,11 @@ services:
       networks:
       - tracker-net
       depends_on:
-        - web-app
+        web-app:
+          condition: service_started
+      environment:
+        - WEB_APP_URL=http://web-app:${WEB_APP_PORT:-8081}
+        - CHROMEDRIVER_PATH=${CHROMEDRIVER_PATH:-/usr/bin/chromedriver}
       entrypoint: python3 /app/main.py
 networks:
   tracker-net:

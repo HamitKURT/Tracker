@@ -7,19 +7,20 @@ import redis
 from elasticsearch import Elasticsearch
 from elasticsearch.helpers import bulk
 
-# Configure Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - WORKER - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Environment Configuration
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 ES_HOST = os.getenv("ES_HOST", "http://elasticsearch:9200")
 ES_USER = os.getenv("ES_USER", "elastic")
-ES_PASSWORD = os.getenv("ES_PASSWORD", "changeme")
+ES_PASSWORD = os.getenv("ES_PASSWORD")
 INDEX = os.getenv("ES_INDEX", "selenium-events")
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", 50))
-MAX_WAIT_TIME = float(os.getenv("MAX_WAIT_TIME", 2.0)) # Seconds
+MAX_WAIT_TIME = float(os.getenv("MAX_WAIT_TIME", 2.0))
+
+if not ES_PASSWORD:
+    raise ValueError("ES_PASSWORD environment variable is required")
 
 def connect_services():
     while True:
@@ -28,7 +29,7 @@ def connect_services():
             r.ping()
             logger.info("Connected to Redis successfully.")
             
-            es = Elasticsearch(ES_HOST, basic_auth=(ES_USER, ES_PASSWORD))
+            es = Elasticsearch(ES_HOST, basic_auth=(ES_USER, ES_PASSWORD), verify_certs=False)
             if not es.ping():
                  raise ConnectionError(f"Elasticsearch ping failed at {ES_HOST}")
             logger.info(f"Connected to Elasticsearch at {ES_HOST}")
@@ -47,12 +48,10 @@ def setup_index(es):
                 "type": {"type": "keyword"},
                 "event": {"type": "keyword"},
                 "url": {"type": "keyword"},
-                # Added Metadata
                 "user_agent": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
                 "is_webdriver": {"type": "boolean"},
                 "language": {"type": "keyword"},
                 "screen_resolution": {"type": "keyword"},
-                # Added Interaction/Query fields
                 "tag": {"type": "keyword"},
                 "id": {"type": "keyword"},
                 "class": {"type": "keyword"},
@@ -62,15 +61,12 @@ def setup_index(es):
                 "method": {"type": "keyword"},
                 "found": {"type": "boolean"},
                 "value_length": {"type": "integer"},
-                # Added Bot/Timing alerts
                 "suspicious": {"type": "boolean"},
                 "interval_ms": {"type": "integer"},
-                # Added Error Tracking
                 "message": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
                 "source": {"type": "keyword"},
                 "lineno": {"type": "integer"},
                 "colno": {"type": "integer"},
-                # Added Visibility
                 "state": {"type": "keyword"}
             }
         }
@@ -96,9 +92,8 @@ def process_logs():
         batch = []
         start_time = time.time()
         
-        # Accumulate logs up to BATCH_SIZE or MAX_WAIT_TIME
         while len(batch) < BATCH_SIZE and (time.time() - start_time) < MAX_WAIT_TIME:
-            item = r.brpop("selenium_logs", timeout=1)  # wait 1 second
+            item = r.brpop("selenium_logs", timeout=1)
             if item:
                 _, data = item
                 try:
@@ -108,17 +103,14 @@ def process_logs():
                 except json.JSONDecodeError:
                     event = {"raw_data": data}
                 
-                # Use server ingestion time
                 event["@timestamp"] = datetime.now(timezone.utc).isoformat()
                 
-                # Prepare Elasticsearch bulk doc wrapper
                 action = {
                     "_index": INDEX,
                     "_source": event
                 }
                 batch.append(action)
                 
-        # Send batch if any items present
         if batch:
             try:
                 success, _ = bulk(es, batch)
