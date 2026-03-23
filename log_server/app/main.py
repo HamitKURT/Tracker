@@ -14,7 +14,7 @@ app = Flask(__name__)
 CORS(app, supports_credentials=True)
 
 # Use Environment variable for Redis to allow Dockerization later
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 
 try:

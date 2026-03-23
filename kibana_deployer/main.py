@@ -5,7 +5,7 @@ import sys
 import os
 
 # --- CONFIGURATION ---
-KIBANA_URL = "http://localhost:5601"
+KIBANA_URL = "http://kibana:5601"
 AUTH = ("elastic", os.getenv("KIBANA_PASSWORD", "changeme"))
 INDEX_PATTERN = "selenium-events*"
 DASHBOARD_ID = "comprehensive-selenium-dashboard"
