@@ -31,16 +31,16 @@ start_services() {
     echo "[Tracker] Installing Python dependencies..."
     pip3 install -r requirements.txt
 
-    echo "[Tracker] Starting Flask LogServer on Port 9000..."
-    python3 LogServer/main.py &
+    echo "[Tracker] Starting Flask log_server on Port 9000..."
+    python3 log_server/main.py &
     SERVER_PID=$!
 
-    echo "[Tracker] Starting Elasticsearch LogWorker..."
-    python3 LogWorker/main.py &
+    echo "[Tracker] Starting Elasticsearch log_worker..."
+    python3 log_worker/main.py &
     WORKER_PID=$!
 
-    echo "[Tracker] Starting Flask WebApp on Port 8081..."
-    python3 WebApp/app.py &
+    echo "[Tracker] Starting Flask web_app on Port 8081..."
+    python3 web_app/app.py &
     WEBAPP_PID=$!
 
 
@@ -61,7 +61,7 @@ start_services() {
     done
 
     echo "[Tracker] Kibana is ready. Executing dashboard deployer..."
-    python3 deploy_kibana_dashboard.py &
+    python3 kibana_deployer/main.py &
     DEPLOY_PID=$!
 
 
