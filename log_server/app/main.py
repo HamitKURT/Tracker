@@ -5,15 +5,12 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import redis
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-# Allow CORS for all origins, supporting headers and credentials if necessary
 CORS(app, supports_credentials=True)
 
-# Use Environment variable for Redis to allow Dockerization later
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 
@@ -24,7 +21,7 @@ try:
 except Exception as e:
     logger.error(f"Failed to connect to Redis at {REDIS_HOST}:{REDIS_PORT}: {e}")
 
-@app.route("/selenium-log", methods=["POST", "OPTIONS"])
+@app.route("/events", methods=["POST", "OPTIONS"])
 def log():
     if request.method == "OPTIONS":
         return jsonify({"status": "ok"}), 200
@@ -41,11 +38,9 @@ def log():
         try:
             data = json.loads(raw_data)
         except json.JSONDecodeError:
-            # Not strict JSON, but we will log it raw
             data = {"raw_payload": raw_data}
             
     try:
-        # Enqueue the log event
         r.lpush("selenium_logs", json.dumps(data))
         return jsonify({"status": "queued"}), 200
     except redis.RedisError as re:
@@ -64,8 +59,7 @@ def health_check():
         return jsonify({"status": "unhealthy", "redis": "disconnected"}), 503
 
 if __name__ == "__main__":
-    SERVER_PORT = int(os.getenv("PORT", 9000))
-    # Allow host environment variable substitution
+    SERVER_PORT = int(os.getenv("PORT", 8084))
     SERVER_HOST = os.getenv("HOST", "0.0.0.0")
     logger.info(f"Starting LogServer on {SERVER_HOST}:{SERVER_PORT}")
     app.run(port=SERVER_PORT, host=SERVER_HOST, debug=False)

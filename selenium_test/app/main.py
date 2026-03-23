@@ -1,4 +1,5 @@
 import time
+import os
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options as ChromeOptions
 from selenium.webdriver.common.by import By
@@ -15,20 +16,22 @@ def setChromeOptions() -> ChromeOptions:
     return options
 
 def run_telemetry_test():
-    print("🚀 Initializing Selenium Test for Tracker system...")
+    print("Initializing Selenium Test for Tracker system...")
     
-    # Configure Chrome options (headless or headed)
-    driver = webdriver.Chrome(options=setChromeOptions())
+    web_app_url = os.getenv("WEB_APP_URL", "http://web-app:8081")
+    chromedriver_path = os.getenv("CHROMEDRIVER_PATH", "/usr/bin/chromedriver")
+    
+    from selenium.webdriver.chrome.service import Service
+    service = Service(executable_path=chromedriver_path)
+    driver = webdriver.Chrome(service=service, options=setChromeOptions())
     wait = WebDriverWait(driver, 5)
     
     try:
-        # 1. Page Load Event & WebDriver Detection
-        print("1️⃣ Navigating to the page...")
-        driver.get("http://web_app:8081")
+        print("1. Navigating to the page...")
+        driver.get(web_app_url)
         time.sleep(2)  
         
-        # 2. Input Tracking (Generates 'interaction' and 'dom-query' events)
-        print("2️⃣ Simulating user typing & standard clicks...")
+        print("2. Simulating user typing & standard clicks...")
         try:
             username_field = driver.find_element(By.ID, "username") 
             username_field.send_keys("test_bot")
@@ -41,8 +44,7 @@ def run_telemetry_test():
         except: pass
         time.sleep(0.5)
 
-        # 3. Missing Selectors (Generates 'found: false' for dom-query)
-        print("3️⃣ Executing invalid CSS and ID queries...")
+        print("3. Executing invalid CSS and ID queries...")
         broken_css = [".missing-class", "div#fake_id", "span.broken-element"]
         for sel in broken_css:
             try: driver.find_element(By.CSS_SELECTOR, sel)
@@ -54,23 +56,20 @@ def run_telemetry_test():
             except: pass
         time.sleep(1)
 
-        # 4. Missing XPaths (Generates 'found: false' for xpath-query)
-        print("4️⃣ Executing invalid XPath queries...")
+        print("4. Executing invalid XPath queries...")
         broken_xpaths = ["//div[@id='nonexistent']", "//span[text()='missing']", "//table/tr/td[99]", "//a[@class='phantom']"]
         for xp in broken_xpaths:
             try: driver.find_element(By.XPATH, xp)
             except: pass
         time.sleep(1)
 
-        # 5. Suspicious Timing Alert & Multiple Element Interactions
-        print("5️⃣ Generating rapid, bot-like clicks and interacting with various tags...")
+        print("5. Generating rapid, bot-like clicks and interacting with various tags...")
         try:
             test_btn = driver.find_element(By.ID, "testButton")
             actions = ActionChains(driver)
             actions.click(test_btn).click(test_btn).click(test_btn).click(test_btn).perform() 
         except: pass
         
-        # Click randomly on the body or header to generate interactions with different tags
         try: driver.find_element(By.TAG_NAME, "h1").click()
         except: pass
         try: driver.find_element(By.TAG_NAME, "p").click()
@@ -79,27 +78,24 @@ def run_telemetry_test():
         except: pass
         time.sleep(1)
         
-        # 6. Throwing Multiple JS Errors
-        print("6️⃣ Triggering multiple unhandled JavaScript errors...")
+        print("6. Triggering multiple unhandled JavaScript errors...")
         try:
             driver.find_element(By.CLASS_NAME, "error-btn").click()
         except: pass
         
-        # Inject raw errors to ensure the dashboard gets detailed logs
         driver.execute_script("setTimeout(function() { fakeFunctionCall(); }, 10);")
         driver.execute_script("setTimeout(function() { window.someUndefinedObj.crash(); }, 20);")
         driver.execute_script("setTimeout(function() { throw new Error('Simulated Database Timeout Exception'); }, 30);")
         time.sleep(1)
         
-        # 7. Navigation/Visibility Tests
-        print("7️⃣ Triggering Page Navigation & testing page transition events...")
+        print("7. Triggering Page Navigation & testing page transition events...")
         try:
             driver.find_element(By.LINK_TEXT, "Navigate to Another Page").click()
         except: pass
         time.sleep(3) 
         
-        print("\n✅ Test sequence complete!")
-        print("🌐 Check your Kibana dashboard or LogWorker output terminal!")
+        print("\nTest sequence complete!")
+        print("Check your Kibana dashboard or LogWorker output terminal!")
         
     finally:
         driver.quit()

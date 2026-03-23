@@ -4,9 +4,14 @@ import time
 import sys
 import os
 
-# --- CONFIGURATION ---
-KIBANA_URL = "http://kibana:5601"
-AUTH = ("elastic", os.getenv("KIBANA_PASSWORD", "changeme"))
+KIBANA_URL = os.getenv("KIBANA_URL", "http://kibana:5601")
+KIBANA_USERNAME = os.getenv("KIBANA_USERNAME", "elastic")
+KIBANA_PASSWORD = os.getenv("KIBANA_PASSWORD")
+
+if not KIBANA_PASSWORD:
+    raise ValueError("KIBANA_PASSWORD environment variable is required")
+
+AUTH = (KIBANA_USERNAME, KIBANA_PASSWORD)
 INDEX_PATTERN = "selenium-events*"
 DASHBOARD_ID = "comprehensive-selenium-dashboard"
 
@@ -15,20 +20,19 @@ session.headers.update({"kbn-xsrf": "true", "Content-Type": "application/json"})
 session.auth = AUTH
 
 def wait_for_kibana():
-    print("⏳ Waiting for Kibana to be ready...")
+    print("Waiting for Kibana to be ready...")
     for _ in range(30):
         try:
             res = session.get(f"{KIBANA_URL}/api/status", timeout=5)
             if res.status_code == 200:
-                print("✅ Kibana is online.")
+                print("Kibana is online.")
                 return True
         except requests.exceptions.ConnectionError:
             time.sleep(2)
-    print("❌ Could not connect to Kibana.")
+    print("Could not connect to Kibana.")
     return False
 
 def get_or_create_data_view():
-    """Captures the UUID of the data view to ensure visuals link correctly."""
     payload = {
         "data_view": {
             "title": INDEX_PATTERN,
@@ -36,28 +40,25 @@ def get_or_create_data_view():
             "timeFieldName": "@timestamp"
         }
     }
-    # 1. Try create
     res = session.post(f"{KIBANA_URL}/api/data_views/data_view", json=payload)
     if res.status_code == 200:
         dv_id = res.json()['data_view']['id']
-        print(f"✅ Created Data View: {dv_id}")
+        print(f"Created Data View: {dv_id}")
         return dv_id
     
-    # 2. If exists or duplicate name, search for the ID
-    print("🔍 Searching for existing Data View UUID...")
+    print("Searching for existing Data View UUID...")
     get_res = session.get(f"{KIBANA_URL}/api/data_views")
     if get_res.status_code == 200:
         for dv in get_res.json().get('data_view', []):
             if dv.get('title') == INDEX_PATTERN:
                 dv_id = dv.get('id')
-                print(f"✅ Found existing ID: {dv_id}")
+                print(f"Found existing ID: {dv_id}")
                 return dv_id
     
-    print(f"❌ Failed to manage Data View: {res.text}")
+    print(f"Failed to manage Data View: {res.text}")
     sys.exit(1)
 
 def create_vis(vis_id, title, v_type, query, aggs, dv_uuid, params=None):
-    """Universal visualization creator for Kibana 8.x"""
     vis_state = {
         "title": title,
         "type": v_type,
@@ -91,35 +92,30 @@ def build_dashboard():
     if not wait_for_kibana(): sys.exit(1)
     
     dv_uuid = get_or_create_data_view()
-    print("📊 Creating Comprehensive Visualizations...")
+    print("Creating Comprehensive Visualizations...")
 
-    # 1. Volume Over Time
     create_vis("v_time", "Events Over Time", "histogram", "", [
         {"id": "1", "type": "count", "schema": "metric"},
         {"id": "2", "type": "date_histogram", "schema": "segment", "params": {"field": "@timestamp", "interval": "auto"}}
     ], dv_uuid)
 
-    # 2. Event Types Pie (Donut)
     create_vis("v_types", "Event Breakdown", "pie", "", [
         {"id": "1", "type": "count", "schema": "metric"},
         {"id": "2", "type": "terms", "schema": "segment", "params": {"field": "type", "size": 10}}
     ], dv_uuid, params={"isDonut": True})
 
-    # 3. Failed Selectors (THE DEBUGGER) - USES .KEYWORD
     create_vis("v_failed_sel", "CRITICAL: Broken Selectors", "table", "found: false AND type: \"dom-query\"", [
         {"id": "1", "type": "count", "schema": "metric"},
         {"id": "2", "type": "terms", "schema": "bucket", "params": {"field": "selector", "size": 10}},
         {"id": "3", "type": "terms", "schema": "bucket", "params": {"field": "url", "size": 10}}
     ], dv_uuid)
 
-    # 3.5 Failed XPaths (THE DEBUGGER) - USES .KEYWORD
     create_vis("v_failed_xpath", "CRITICAL: Broken XPaths", "table", "found: false AND type: \"xpath-query\"", [
         {"id": "1", "type": "count", "schema": "metric"},
         {"id": "2", "type": "terms", "schema": "bucket", "params": {"field": "xpath", "size": 10}},
         {"id": "3", "type": "terms", "schema": "bucket", "params": {"field": "url", "size": 10}}
     ], dv_uuid)
 
-    # 4. JS Error Log - USES .KEYWORD
     create_vis("v_js_err", "JS Runtime Crashes (Detailed)", "table", "type: \"js-error\"", [
         {"id": "1", "type": "count", "schema": "metric"},
         {"id": "2", "type": "terms", "schema": "bucket", "params": {"field": "message.keyword", "size": 10}},
@@ -128,13 +124,12 @@ def build_dashboard():
         {"id": "5", "type": "terms", "schema": "bucket", "params": {"field": "url", "size": 10}}
     ], dv_uuid)
 
-    # 5. Tag Interactions
     create_vis("v_tags", "Most Interacted Elements", "pie", "", [
         {"id": "1", "type": "count", "schema": "metric"},
         {"id": "2", "type": "terms", "schema": "segment", "params": {"field": "tag", "size": 10}}
     ], dv_uuid)
 
-    print("🏗️  Assembling Dashboard layout...")
+    print("Assembling Dashboard layout...")
     dash_payload = {
         "attributes": {
             "title": "Comprehensive Selenium Telemetry Dashboard",
@@ -163,9 +158,9 @@ def build_dashboard():
 
     res = session.post(f"{KIBANA_URL}/api/saved_objects/dashboard/{DASHBOARD_ID}?overwrite=true", json=dash_payload)
     if res.status_code in [200, 201, 409]:
-        print(f"\n🚀 SUCCESS! Dashboard ready at: {KIBANA_URL}/app/dashboards#/view/{DASHBOARD_ID}")
+        print(f"\nSUCCESS! Dashboard ready at: {KIBANA_URL}/app/dashboards#/view/{DASHBOARD_ID}")
     else:
-        print(f"❌ Failed: {res.text}")
+        print(f"Failed: {res.text}")
 
 if __name__ == "__main__":
     build_dashboard()
