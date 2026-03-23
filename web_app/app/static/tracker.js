@@ -21,6 +21,7 @@
      * via data-attributes on the script tag.
      */
     const CONFIG = {
+        ENDPOINT: '10.20.0.5',
         API_PORT: 9000,
         ENDPOINT_PATH: '/selenium-log',
         MAX_INTERACTION_RATE_MS: 80, // Flag clicks under 80ms as suspicious (bot-like).
@@ -29,7 +30,7 @@
 
 
     // Change ${window.location.hostname} with the log server IP or hostname
-    const LOG_ENDPOINT = `http://${window.location.hostname}:${CONFIG.API_PORT}${CONFIG.ENDPOINT_PATH}`;
+    const LOG_ENDPOINT = `http://${CONFIG.ENDPOINT}:${CONFIG.API_PORT}${CONFIG.ENDPOINT_PATH}`;
 
     /**
      * Internal state object holding information consistent across this session.

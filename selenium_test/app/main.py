@@ -1,24 +1,30 @@
 import time
 from selenium import webdriver
+from selenium.webdriver.chrome.options import Options as ChromeOptions
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+def setChromeOptions() -> ChromeOptions:
+    options = ChromeOptions()
+    options.add_argument("--start-maximized")
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    return options
+
 def run_telemetry_test():
     print("🚀 Initializing Selenium Test for Tracker system...")
     
     # Configure Chrome options (headless or headed)
-    options = webdriver.ChromeOptions()
-    options.add_argument('--headless=new') # Run in headless mode for simplicity, remove to see the browser
-    
-    driver = webdriver.Chrome(options=options)
+    driver = webdriver.Chrome(options=setChromeOptions())
     wait = WebDriverWait(driver, 5)
     
     try:
         # 1. Page Load Event & WebDriver Detection
         print("1️⃣ Navigating to the page...")
-        driver.get("http://localhost:8081")
+        driver.get("http://web_app:8081")
         time.sleep(2)  
         
         # 2. Input Tracking (Generates 'interaction' and 'dom-query' events)

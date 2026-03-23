@@ -1,0 +1,133 @@
+services:
+  redis:
+    image: redis:7
+    container_name: redis
+    networks:
+      - tracker-net
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false # Disable SSL for local testing
+      - ELASTIC_PASSWORD=changeme
+      - KIBANA_PASSWORD=changeme
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200 || exit 1"]
+      interval: 10s
+      retries: 10
+      timeout: 5s
+    networks:
+      - tracker-net
+    ports:
+      - "9200:9200"
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.0
+    container_name: kibana
+    restart: on-failure
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=changeme
+      - xpack.security.enabled=false
+    healthcheck:
+        test: ["CMD", "curl", "-f", "http://localhost:5601/api/status"]
+        interval: 10s
+        retries: 30
+        start_period: 5s
+        timeout: 5s
+    networks:
+      - tracker-net
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  kibana_deployer:
+    image: python:alpine
+    container_name: kibana_deployer
+    depends_on:
+      kibana:
+        condition: service_healthy
+    volumes:
+      - ./kibana_deployer:/app
+    working_dir: /app
+    command: >
+      sh -c "
+      pip install requests &&
+      python main.py
+      "
+    networks:
+      - tracker-net
+
+  log-server:
+      restart: unless-stopped
+      build:
+          context: ./log_server
+          dockerfile: Dockerfile
+      container_name: log_server
+      networks:
+      - tracker-net
+      ports:
+        - "9000:9000"
+      depends_on:
+        kibana:
+          condition: service_healthy
+      entrypoint: python3 /app/main.py
+
+  log-worker:
+      restart: unless-stopped
+      build:
+          context: ./log_worker
+          dockerfile: Dockerfile
+      container_name: log_worker
+      networks:
+      - tracker-net
+      depends_on:
+        elasticsearch:
+          condition: service_healthy
+        redis:
+          condition: service_healthy
+      entrypoint: python3 /app/main.py
+
+  web-app:
+      restart: unless-stopped
+      build:
+          context: ./web_app
+          dockerfile: Dockerfile
+      container_name: web_app
+      networks:
+      - tracker-net
+      ports:
+        - "8081:8081"
+      depends_on:
+        - log-worker
+      entrypoint: python3 /app/app.py
+
+  selenium-test:
+      restart: unless-stopped
+      build:
+          context: ./selenium_test
+          dockerfile: Dockerfile
+      container_name: selenium_test
+      networks:
+      - tracker-net
+      depends_on:
+        - web-app
+      entrypoint: python3 /app/main.py
+networks:
+  tracker-net:
+    driver: bridge
