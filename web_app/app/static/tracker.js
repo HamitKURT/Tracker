@@ -2,14 +2,13 @@
     "use strict";
 
     const CONFIG = {
-        ENDPOINT: window.location.hostname || 'localhost',
-        API_PORT: parseInt(window.ENV_API_PORT) || 8084,
+        ENDPOINT_URL: window.ENV_LOGSERVER_URL,
         ENDPOINT_PATH: '/events',
         MAX_INTERACTION_RATE_MS: 80,
         DEBUG_MODE: window.ENV_DEBUG === 'true'
     };
 
-    const LOG_ENDPOINT = `http://${CONFIG.ENDPOINT}:${CONFIG.API_PORT}${CONFIG.ENDPOINT_PATH}`;
+    const LOG_ENDPOINT = `${CONFIG.ENDPOINT_URL}${CONFIG.ENDPOINT_PATH}`;
 
     const state = {
         sessionId: generateUUID(),

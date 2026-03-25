@@ -12,15 +12,13 @@ logger = logging.getLogger(__name__)
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-ES_HOST = os.getenv("ES_HOST", "http://elasticsearch:9200")
-ES_USER = os.getenv("ES_USER", "elastic")
-ES_PASSWORD = os.getenv("ES_PASSWORD")
-INDEX = os.getenv("ES_INDEX", "selenium-events")
+ELASTIC_URL = os.getenv("ELASTIC_URL", "http://elasticsearch:9200")
+ELASTIC_USER = os.getenv("ELASTIC_USER", "elastic")
+ELASTIC_PASSWORD = os.getenv("ELASTIC_PASSWORD", "changeme")
+INDEX = os.getenv("ELASTIC_INDEX", "selenium-events")
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", 50))
 MAX_WAIT_TIME = float(os.getenv("MAX_WAIT_TIME", 2.0))
 
-if not ES_PASSWORD:
-    raise ValueError("ES_PASSWORD environment variable is required")
 
 def connect_services():
     while True:
@@ -29,10 +27,10 @@ def connect_services():
             r.ping()
             logger.info("Connected to Redis successfully.")
             
-            es = Elasticsearch(ES_HOST, basic_auth=(ES_USER, ES_PASSWORD), verify_certs=False)
+            es = Elasticsearch(ELASTIC_URL, basic_auth=(ELASTIC_USER, ELASTIC_PASSWORD), verify_certs=False)
             if not es.ping():
-                 raise ConnectionError(f"Elasticsearch ping failed at {ES_HOST}")
-            logger.info(f"Connected to Elasticsearch at {ES_HOST}")
+                 raise ConnectionError(f"Elasticsearch ping failed at {ELASTIC_URL}")
+            logger.info(f"Connected to Elasticsearch at {ELASTIC_URL}")
             return r, es
         except Exception as e:
             logger.error(f"Waiting for services to become available: {e}")
