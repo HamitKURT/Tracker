@@ -13,6 +13,7 @@ CORS(app, supports_credentials=True)
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+REDIS_QUEUE_KEY = os.getenv("REDIS_QUEUE_KEY", "selenium_logs")
 
 try:
     r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
@@ -22,7 +23,7 @@ except Exception as e:
     logger.error(f"Failed to connect to Redis at {REDIS_HOST}:{REDIS_PORT}: {e}")
 
 @app.route("/events", methods=["POST", "OPTIONS"])
-def log():
+def handle_event():
     if request.method == "OPTIONS":
         return jsonify({"status": "ok"}), 200
 
@@ -41,7 +42,11 @@ def log():
             data = {"raw_payload": raw_data}
             
     try:
-        r.lpush("selenium_logs", json.dumps(data))
+        if isinstance(data, list):
+            for item in data:
+                r.lpush(REDIS_QUEUE_KEY, json.dumps(item) if isinstance(item, dict) else json.dumps({"raw_payload": item}))
+        else:
+            r.lpush(REDIS_QUEUE_KEY, json.dumps(data))
         return jsonify({"status": "queued"}), 200
     except redis.RedisError as re:
         logger.error(f"Redis error during lpush: {re}")

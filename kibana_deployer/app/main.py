@@ -1,40 +1,45 @@
 import requests
 import json
+import logging
 import time
 import sys
 import os
 import io
 import uuid
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - DEPLOYER - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 KIBANA_URL  = os.getenv("KIBANA_URL",  "http://kibana:5601")
 ELASTIC_URL = os.getenv("ELASTIC_URL", "http://elasticsearch:9200")
 
-KIBANA_USERNAME  = os.getenv("KIBANA_USERNAME", "kibana_system")
-KIBANA_PASSWORD  = os.getenv("KIBANA_PASSWORD", "changeme")
 ELASTIC_USERNAME = os.getenv("ELASTIC_USERNAME", "elastic")
 ELASTIC_PASSWORD = os.getenv("ELASTIC_PASSWORD", "changeme")
+KIBANA_SYSTEM_PASSWORD = os.getenv("KIBANA_PASSWORD", "changeme")
 
-if not KIBANA_PASSWORD:
+if not KIBANA_SYSTEM_PASSWORD:
     raise ValueError("KIBANA_PASSWORD environment variable is required")
 
 INDEX_PATTERN = "selenium-events*"
 DASHBOARD_ID  = "comprehensive-selenium-dashboard"
 DATA_VIEW_ID  = "selenium-events-data-view"
 
+# Kibana API sessions must use 'elastic' superuser — kibana_system is a
+# service account without management privileges (causes 403 on data view creation).
 session = requests.Session()
 session.headers.update({"kbn-xsrf": "true"})
-session.auth = (KIBANA_USERNAME, KIBANA_PASSWORD)
+session.auth = (ELASTIC_USERNAME, ELASTIC_PASSWORD)
 
 json_session = requests.Session()
 json_session.headers.update({"kbn-xsrf": "true", "Content-Type": "application/json"})
-json_session.auth = (KIBANA_USERNAME, KIBANA_PASSWORD)
+json_session.auth = (ELASTIC_USERNAME, ELASTIC_PASSWORD)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. Wait for Elasticsearch
 # ─────────────────────────────────────────────────────────────────────────────
 def wait_for_elasticsearch():
-    print("[ES] Waiting for cluster health...")
+    logger.info("[ES] Waiting for cluster health...")
     time.sleep(10)
     while True:
         try:
@@ -46,10 +51,10 @@ def wait_for_elasticsearch():
             if res.status_code == 200:
                 status = res.json().get("status")
                 if status in ("yellow", "green"):
-                    print(f"[ES] Ready (status={status})")
+                    logger.info(f"[ES] Ready (status={status})")
                     return
         except Exception as exc:
-            print(f"[ES] {exc} — retrying...")
+            logger.warning(f"[ES] {exc} — retrying...")
         time.sleep(5)
 
 
@@ -58,20 +63,20 @@ def wait_for_elasticsearch():
 # ─────────────────────────────────────────────────────────────────────────────
 def configure_kibana_system():
     wait_for_elasticsearch()
-    print("[ES] Waiting for .security index to initialise (30s)...")
+    logger.info("[ES] Waiting for .security index to initialise (30s)...")
     time.sleep(30)
 
-    print("[ES] Setting kibana_system password...")
+    logger.info("[ES] Setting kibana_system password...")
     res = requests.put(
         f"{ELASTIC_URL}/_security/user/kibana_system/_password",
         auth=(ELASTIC_USERNAME, ELASTIC_PASSWORD),
-        json={"password": KIBANA_PASSWORD},
+        json={"password": KIBANA_SYSTEM_PASSWORD},
     )
     if res.status_code in (200, 204):
-        print("[ES] kibana_system configured successfully.")
+        logger.info("[ES] kibana_system configured successfully.")
         mark_elastic_ready()
     else:
-        print(f"[ES] Failed: {res.status_code} — {res.text}")
+        logger.error(f"[ES] Failed: {res.status_code} — {res.text}")
         sys.exit(1)
 
 
@@ -84,18 +89,18 @@ def mark_elastic_ready():
 # 3. Wait for Kibana
 # ─────────────────────────────────────────────────────────────────────────────
 def wait_for_kibana():
-    print("[Kibana] Waiting for Kibana to become ready...")
+    logger.info("[Kibana] Waiting for Kibana to become ready...")
     while True:
         try:
             res = session.get(f"{KIBANA_URL}/api/status", timeout=5)
             if res.status_code == 200:
                 level = res.json().get("status", {}).get("overall", {}).get("level", "")
                 if level == "available":
-                    print("[Kibana] Ready.")
+                    logger.info("[Kibana] Ready.")
                     return
-                print(f"[Kibana] Status: {level} — waiting...")
+                logger.info(f"[Kibana] Status: {level} — waiting...")
         except Exception as exc:
-            print(f"[Kibana] {exc} — retrying...")
+            logger.warning(f"[Kibana] {exc} — retrying...")
         time.sleep(5)
 
 
@@ -103,7 +108,7 @@ def wait_for_kibana():
 # 4. Create Data View
 # ─────────────────────────────────────────────────────────────────────────────
 def get_or_create_data_view() -> str:
-    print(f"[Kibana] Creating data view: {INDEX_PATTERN}")
+    logger.info(f"[Kibana] Creating data view: {INDEX_PATTERN}")
     payload = {
         "data_view": {
             "id":            DATA_VIEW_ID,
@@ -116,23 +121,23 @@ def get_or_create_data_view() -> str:
     res = json_session.post(f"{KIBANA_URL}/api/data_views/data_view", json=payload)
     if res.status_code in (200, 201):
         dv_id = res.json()["data_view"]["id"]
-        print(f"[Kibana] Data view created: {dv_id}")
+        logger.info(f"[Kibana] Data view created: {dv_id}")
         return dv_id
 
     if res.status_code == 400 and "already exists" in res.text:
-        print("[Kibana] Data view already exists, searching...")
+        logger.info("[Kibana] Data view already exists, searching...")
     else:
-        print(f"[Kibana] Failed to create data view ({res.status_code}): {res.text}")
+        logger.warning(f"[Kibana] Failed to create data view ({res.status_code}): {res.text}")
 
     get_res = json_session.get(f"{KIBANA_URL}/api/data_views")
     if get_res.status_code == 200:
         for dv in get_res.json().get("data_view", []):
             if dv.get("title") == INDEX_PATTERN:
                 dv_id = dv["id"]
-                print(f"[Kibana] Found existing data view: {dv_id}")
+                logger.info(f"[Kibana] Found existing data view: {dv_id}")
                 return dv_id
 
-    print("[Kibana] Data view not found.")
+    logger.error("[Kibana] Data view not found.")
     sys.exit(1)
 
 
@@ -292,10 +297,10 @@ def build_ndjson(dv_id: str) -> str:
         }
 
     # ── 1. Events Over Time (XY bar) ─────────────────────────────────────────
-    l1      = uid(); c_ts = uid(); c_cnt1 = uid()
-    v_time  = lens_obj("v_time", "Events Over Time", "lnsXY", l1,
+    layer_time = uid(); col_timestamp = uid(); col_count_time = uid()
+    v_time  = lens_obj("v_time", "Events Over Time", "lnsXY", layer_time,
         layer=make_layer({
-            c_ts: {
+            col_timestamp: {
                 "dataType":      "date",
                 "isBucketed":    True,
                 "label":         "@timestamp",
@@ -303,19 +308,19 @@ def build_ndjson(dv_id: str) -> str:
                 "params":        {"dropPartials": False, "includeEmptyRows": True, "interval": "auto"},
                 "sourceField":   "@timestamp",
             },
-            c_cnt1: count_col(),
-        }, [c_ts, c_cnt1], l1),
-        visualization=xy_visualization(l1, c_ts, c_cnt1),
+            col_count_time: count_col(),
+        }, [col_timestamp, col_count_time], layer_time),
+        visualization=xy_visualization(layer_time, col_timestamp, col_count_time),
     )
 
     # ── 2. Event Breakdown (donut) ────────────────────────────────────────────
-    l2      = uid(); c_type = uid(); c_cnt2 = uid()
-    v_types = lens_obj("v_types", "Event Breakdown", "lnsPie", l2,
+    layer_types = uid(); col_event_type = uid(); col_count_types = uid()
+    v_types = lens_obj("v_types", "Event Breakdown", "lnsPie", layer_types,
         layer=make_layer({
-            c_type: terms_col("Event Type", "type", c_cnt2),
-            c_cnt2: count_col(),
-        }, [c_type, c_cnt2], l2),
-        visualization=pie_visualization(l2, c_type, c_cnt2, shape="donut"),
+            col_event_type: terms_col("Event Type", "type", col_count_types),
+            col_count_types: count_col(),
+        }, [col_event_type, col_count_types], layer_types),
+        visualization=pie_visualization(layer_types, col_event_type, col_count_types, shape="donut"),
     )
 
     # ── Helper: terms column with full record count (size:10000, no "Other" bucket)
@@ -352,14 +357,14 @@ def build_ndjson(dv_id: str) -> str:
 
     # ── 3. Broken Selectors (datatable) ──────────────────────────────────────
     # Columns: selector | url | count   Filter: found:false AND type:dom-query
-    l3 = uid(); c_sel = uid(); c_url3 = uid(); c_cnt3 = uid()
-    v_failed_sel = lens_obj("v_failed_sel", "CRITICAL: Broken Selectors", "lnsDatatable", l3,
+    layer_sel = uid(); col_selector = uid(); col_url_sel = uid(); col_count_sel = uid()
+    v_failed_sel = lens_obj("v_failed_sel", "CRITICAL: Broken Selectors", "lnsDatatable", layer_sel,
         layer=make_layer({
-            c_sel:  terms_col_all("Selector", "selector", c_cnt3),
-            c_url3: terms_col_all("URL",      "url",      c_cnt3),
-            c_cnt3: count_col(),
-        }, [c_sel, c_url3, c_cnt3], l3),
-        visualization=datatable_vis(l3, [c_sel, c_url3, c_cnt3], c_cnt3),
+            col_selector:  terms_col_all("Selector", "selector", col_count_sel),
+            col_url_sel:   terms_col_all("URL",      "url",      col_count_sel),
+            col_count_sel: count_col(),
+        }, [col_selector, col_url_sel, col_count_sel], layer_sel),
+        visualization=datatable_vis(layer_sel, [col_selector, col_url_sel, col_count_sel], col_count_sel),
         filters=[{"meta": {"type": "custom", "disabled": False, "negate": False},
                   "query": {"bool": {"must": [
                       {"term":  {"found": False}},
@@ -369,14 +374,14 @@ def build_ndjson(dv_id: str) -> str:
 
     # ── 4. Broken XPaths (datatable) ─────────────────────────────────────────
     # Columns: xpath | url | count   Filter: found:false AND type:xpath-query
-    l4 = uid(); c_xp = uid(); c_url4 = uid(); c_cnt4 = uid()
-    v_failed_xpath = lens_obj("v_failed_xpath", "CRITICAL: Broken XPaths", "lnsDatatable", l4,
+    layer_xpath = uid(); col_xpath_val = uid(); col_url_xpath = uid(); col_count_xpath = uid()
+    v_failed_xpath = lens_obj("v_failed_xpath", "CRITICAL: Broken XPaths", "lnsDatatable", layer_xpath,
         layer=make_layer({
-            c_xp:   terms_col_all("XPath", "xpath", c_cnt4),
-            c_url4: terms_col_all("URL",   "url",   c_cnt4),
-            c_cnt4: count_col(),
-        }, [c_xp, c_url4, c_cnt4], l4),
-        visualization=datatable_vis(l4, [c_xp, c_url4, c_cnt4], c_cnt4),
+            col_xpath_val:   terms_col_all("XPath", "xpath", col_count_xpath),
+            col_url_xpath:   terms_col_all("URL",   "url",   col_count_xpath),
+            col_count_xpath: count_col(),
+        }, [col_xpath_val, col_url_xpath, col_count_xpath], layer_xpath),
+        visualization=datatable_vis(layer_xpath, [col_xpath_val, col_url_xpath, col_count_xpath], col_count_xpath),
         filters=[{"meta": {"type": "custom", "disabled": False, "negate": False},
                   "query": {"bool": {"must": [
                       {"term":  {"found": False}},
@@ -387,14 +392,14 @@ def build_ndjson(dv_id: str) -> str:
     # ── 5. JS Runtime Crashes (datatable) ────────────────────────────────────
     # Columns: message | source | url | count | lineno(median)
     # Filter: type:js-error
-    l5 = uid(); c_msg = uid(); c_src = uid(); c_url5 = uid(); c_cnt5 = uid(); c_ln = uid()
-    v_js_err = lens_obj("v_js_err", "JS Runtime Crashes (Detailed)", "lnsDatatable", l5,
+    layer_err = uid(); col_message = uid(); col_source = uid(); col_url_err = uid(); col_count_err = uid(); col_lineno = uid()
+    v_js_err = lens_obj("v_js_err", "JS Runtime Crashes (Detailed)", "lnsDatatable", layer_err,
         layer=make_layer({
-            c_msg:  terms_col_all("Message", "message.keyword", c_cnt5),
-            c_src:  terms_col_all("Source",  "source",          c_cnt5),
-            c_url5: terms_col_all("URL",     "url",             c_cnt5),
-            c_cnt5: count_col(),
-            c_ln: {
+            col_message: terms_col_all("Message", "message.keyword", col_count_err),
+            col_source:  terms_col_all("Source",  "source",          col_count_err),
+            col_url_err: terms_col_all("URL",     "url",             col_count_err),
+            col_count_err: count_col(),
+            col_lineno: {
                 "dataType":      "number",
                 "isBucketed":    False,
                 "label":         "Line No",
@@ -402,36 +407,146 @@ def build_ndjson(dv_id: str) -> str:
                 "params":        {"emptyAsNull": True},
                 "sourceField":   "lineno",
             },
-        }, [c_msg, c_src, c_url5, c_cnt5, c_ln], l5),
-        visualization=datatable_vis(l5, [c_msg, c_src, c_url5, c_cnt5, c_ln], c_cnt5),
+        }, [col_message, col_source, col_url_err, col_count_err, col_lineno], layer_err),
+        visualization=datatable_vis(layer_err, [col_message, col_source, col_url_err, col_count_err, col_lineno], col_count_err),
         filters=[{"meta": {"type": "custom", "disabled": False, "negate": False},
                   "query": {"match": {"type": "js-error"}}}],
     )
 
     # ── 6. Most Interacted Elements (pie) ────────────────────────────────────
-    l6      = uid(); c_tag = uid(); c_cnt6 = uid()
-    v_tags  = lens_obj("v_tags", "Most Interacted Elements", "lnsPie", l6,
+    layer_tags = uid(); col_tag = uid(); col_count_tags = uid()
+    v_tags  = lens_obj("v_tags", "Most Interacted Elements", "lnsPie", layer_tags,
         layer=make_layer({
-            c_tag:  terms_col("Tag", "tag", c_cnt6),
-            c_cnt6: count_col(),
-        }, [c_tag, c_cnt6], l6),
-        visualization=pie_visualization(l6, c_tag, c_cnt6, shape="pie"),
+            col_tag:        terms_col("Tag", "tag", col_count_tags),
+            col_count_tags: count_col(),
+        }, [col_tag, col_count_tags], layer_tags),
+        visualization=pie_visualization(layer_tags, col_tag, col_count_tags, shape="pie"),
+    )
+
+    # ── 7. Performance Overview (datatable) ─────────────────────────────────
+    layer_perf = uid(); col_perf_url = uid(); col_dom_loaded = uid(); col_load_complete = uid(); col_fcp = uid(); col_res_count = uid()
+    v_perf = lens_obj("v_perf", "Performance Overview", "lnsDatatable", layer_perf,
+        layer=make_layer({
+            col_perf_url: terms_col_all("URL", "url", col_load_complete),
+            col_dom_loaded: {
+                "dataType": "number", "isBucketed": False,
+                "label": "DOM Loaded (ms)", "operationType": "median",
+                "params": {"emptyAsNull": True}, "sourceField": "dom_content_loaded_ms",
+            },
+            col_load_complete: {
+                "dataType": "number", "isBucketed": False,
+                "label": "Load Complete (ms)", "operationType": "median",
+                "params": {"emptyAsNull": True}, "sourceField": "load_complete_ms",
+            },
+            col_fcp: {
+                "dataType": "number", "isBucketed": False,
+                "label": "FCP (ms)", "operationType": "median",
+                "params": {"emptyAsNull": True}, "sourceField": "first_contentful_paint_ms",
+            },
+            col_res_count: {
+                "dataType": "number", "isBucketed": False,
+                "label": "Resources", "operationType": "median",
+                "params": {"emptyAsNull": True}, "sourceField": "resource_count",
+            },
+        }, [col_perf_url, col_dom_loaded, col_load_complete, col_fcp, col_res_count], layer_perf),
+        visualization=datatable_vis(layer_perf, [col_perf_url, col_dom_loaded, col_load_complete, col_fcp, col_res_count], col_load_complete),
+        filters=[{"meta": {"type": "custom", "disabled": False, "negate": False},
+                  "query": {"match": {"type": "performance"}}}],
+    )
+
+    # ── 8. Network Requests (XY bar) ─────────────────────────────────────────
+    layer_net = uid(); col_net_ts = uid(); col_net_count = uid()
+    v_network = lens_obj("v_network", "Network Requests Over Time", "lnsXY", layer_net,
+        layer=make_layer({
+            col_net_ts: {
+                "dataType": "date", "isBucketed": True,
+                "label": "@timestamp", "operationType": "date_histogram",
+                "params": {"dropPartials": False, "includeEmptyRows": True, "interval": "auto"},
+                "sourceField": "@timestamp",
+            },
+            col_net_count: count_col(),
+        }, [col_net_ts, col_net_count], layer_net),
+        visualization=xy_visualization(layer_net, col_net_ts, col_net_count),
+        filters=[{"meta": {"type": "custom", "disabled": False, "negate": False},
+                  "query": {"match": {"type": "network-request"}}}],
+    )
+
+    # ── 9. Scroll Depth Distribution (XY bar) ────────────────────────────────
+    layer_scroll = uid(); col_scroll_depth = uid(); col_scroll_count = uid()
+    v_scroll = lens_obj("v_scroll", "Scroll Depth Distribution", "lnsXY", layer_scroll,
+        layer=make_layer({
+            col_scroll_depth: {
+                "dataType": "number", "isBucketed": True,
+                "label": "Max Scroll Depth %", "operationType": "range",
+                "params": {
+                    "type": "range",
+                    "maxBars": "auto",
+                    "ranges": [
+                        {"from": 0, "to": 25, "label": "0-25%"},
+                        {"from": 25, "to": 50, "label": "25-50%"},
+                        {"from": 50, "to": 75, "label": "50-75%"},
+                        {"from": 75, "to": 101, "label": "75-100%"},
+                    ],
+                },
+                "sourceField": "max_depth_percent",
+            },
+            col_scroll_count: count_col(),
+        }, [col_scroll_depth, col_scroll_count], layer_scroll),
+        visualization=xy_visualization(layer_scroll, col_scroll_depth, col_scroll_count, series_type="bar"),
+        filters=[{"meta": {"type": "custom", "disabled": False, "negate": False},
+                  "query": {"match": {"type": "scroll-depth"}}}],
+    )
+
+    # ── 10. Console Errors (datatable) ────────────────────────────────────────
+    layer_console = uid(); col_console_msg = uid(); col_console_level = uid(); col_console_count = uid()
+    v_console = lens_obj("v_console", "Console Errors & Warnings", "lnsDatatable", layer_console,
+        layer=make_layer({
+            col_console_msg:   terms_col_all("Message", "message.keyword", col_console_count),
+            col_console_level: terms_col_all("Level", "level", col_console_count),
+            col_console_count: count_col(),
+        }, [col_console_msg, col_console_level, col_console_count], layer_console),
+        visualization=datatable_vis(layer_console, [col_console_msg, col_console_level, col_console_count], col_console_count),
+        filters=[{"meta": {"type": "custom", "disabled": False, "negate": False},
+                  "query": {"match": {"type": "console-error"}}}],
+    )
+
+    # ── 11. Connection Issues (datatable) ─────────────────────────────────────
+    layer_conn = uid(); col_conn_status = uid(); col_conn_url = uid(); col_conn_count = uid()
+    v_conn = lens_obj("v_conn", "Connection Issues", "lnsDatatable", layer_conn,
+        layer=make_layer({
+            col_conn_status: terms_col_all("Status", "status", col_conn_count),
+            col_conn_url:    terms_col_all("URL", "url", col_conn_count),
+            col_conn_count:  count_col(),
+        }, [col_conn_status, col_conn_url, col_conn_count], layer_conn),
+        visualization=datatable_vis(layer_conn, [col_conn_status, col_conn_url, col_conn_count], col_conn_count),
+        filters=[{"meta": {"type": "custom", "disabled": False, "negate": False},
+                  "query": {"match": {"type": "connection"}}}],
     )
 
     # ── Dashboard ─────────────────────────────────────────────────────────────
     panels = [
-        {"panelIndex": "1", "type": "lens", "panelRefName": "panel_v_time",
-         "gridData": {"x": 0,  "y": 0,  "w": 48, "h": 12, "i": "1"}, "embeddableConfig": {}},
-        {"panelIndex": "2", "type": "lens", "panelRefName": "panel_v_types",
-         "gridData": {"x": 0,  "y": 12, "w": 24, "h": 12, "i": "2"}, "embeddableConfig": {}},
-        {"panelIndex": "3", "type": "lens", "panelRefName": "panel_v_tags",
-         "gridData": {"x": 24, "y": 12, "w": 24, "h": 12, "i": "3"}, "embeddableConfig": {}},
-        {"panelIndex": "4", "type": "lens", "panelRefName": "panel_v_failed_sel",
-         "gridData": {"x": 0,  "y": 24, "w": 16, "h": 15, "i": "4"}, "embeddableConfig": {}},
-        {"panelIndex": "5", "type": "lens", "panelRefName": "panel_v_failed_xpath",
-         "gridData": {"x": 16, "y": 24, "w": 16, "h": 15, "i": "5"}, "embeddableConfig": {}},
-        {"panelIndex": "6", "type": "lens", "panelRefName": "panel_v_js_err",
-         "gridData": {"x": 32, "y": 24, "w": 16, "h": 15, "i": "6"}, "embeddableConfig": {}},
+        {"panelIndex": "1",  "type": "lens", "panelRefName": "panel_v_time",
+         "gridData": {"x": 0,  "y": 0,  "w": 48, "h": 12, "i": "1"},  "embeddableConfig": {}},
+        {"panelIndex": "2",  "type": "lens", "panelRefName": "panel_v_types",
+         "gridData": {"x": 0,  "y": 12, "w": 24, "h": 12, "i": "2"},  "embeddableConfig": {}},
+        {"panelIndex": "3",  "type": "lens", "panelRefName": "panel_v_tags",
+         "gridData": {"x": 24, "y": 12, "w": 24, "h": 12, "i": "3"},  "embeddableConfig": {}},
+        {"panelIndex": "4",  "type": "lens", "panelRefName": "panel_v_failed_sel",
+         "gridData": {"x": 0,  "y": 24, "w": 16, "h": 15, "i": "4"},  "embeddableConfig": {}},
+        {"panelIndex": "5",  "type": "lens", "panelRefName": "panel_v_failed_xpath",
+         "gridData": {"x": 16, "y": 24, "w": 16, "h": 15, "i": "5"},  "embeddableConfig": {}},
+        {"panelIndex": "6",  "type": "lens", "panelRefName": "panel_v_js_err",
+         "gridData": {"x": 32, "y": 24, "w": 16, "h": 15, "i": "6"},  "embeddableConfig": {}},
+        {"panelIndex": "7",  "type": "lens", "panelRefName": "panel_v_perf",
+         "gridData": {"x": 0,  "y": 39, "w": 48, "h": 12, "i": "7"},  "embeddableConfig": {}},
+        {"panelIndex": "8",  "type": "lens", "panelRefName": "panel_v_network",
+         "gridData": {"x": 0,  "y": 51, "w": 24, "h": 12, "i": "8"},  "embeddableConfig": {}},
+        {"panelIndex": "9",  "type": "lens", "panelRefName": "panel_v_scroll",
+         "gridData": {"x": 24, "y": 51, "w": 24, "h": 12, "i": "9"},  "embeddableConfig": {}},
+        {"panelIndex": "10", "type": "lens", "panelRefName": "panel_v_console",
+         "gridData": {"x": 0,  "y": 63, "w": 24, "h": 12, "i": "10"}, "embeddableConfig": {}},
+        {"panelIndex": "11", "type": "lens", "panelRefName": "panel_v_conn",
+         "gridData": {"x": 24, "y": 63, "w": 24, "h": 12, "i": "11"}, "embeddableConfig": {}},
     ]
 
     dashboard = {
@@ -440,7 +555,7 @@ def build_ndjson(dv_id: str) -> str:
         "managed": False,
         "attributes": {
             "title":       "Comprehensive Selenium Telemetry Dashboard",
-            "description": "Full view of bot behaviour and site errors",
+            "description": "Full view of bot behaviour, site errors, performance, and network activity",
             "panelsJSON":  json.dumps(panels),
             "optionsJSON": json.dumps({
                 "useMargins":      True,
@@ -463,11 +578,17 @@ def build_ndjson(dv_id: str) -> str:
             {"name": "panel_v_failed_sel",   "type": "lens", "id": "v_failed_sel"},
             {"name": "panel_v_failed_xpath", "type": "lens", "id": "v_failed_xpath"},
             {"name": "panel_v_js_err",       "type": "lens", "id": "v_js_err"},
+            {"name": "panel_v_perf",         "type": "lens", "id": "v_perf"},
+            {"name": "panel_v_network",      "type": "lens", "id": "v_network"},
+            {"name": "panel_v_scroll",       "type": "lens", "id": "v_scroll"},
+            {"name": "panel_v_console",      "type": "lens", "id": "v_console"},
+            {"name": "panel_v_conn",         "type": "lens", "id": "v_conn"},
         ],
         "coreMigrationVersion": "8.8.0",
     }
 
-    objects = [v_time, v_types, v_failed_sel, v_failed_xpath, v_js_err, v_tags, dashboard]
+    objects = [v_time, v_types, v_failed_sel, v_failed_xpath, v_js_err, v_tags,
+               v_perf, v_network, v_scroll, v_console, v_conn, dashboard]
     return "\n".join(json.dumps(obj) for obj in objects)
 
 
@@ -475,7 +596,7 @@ def build_ndjson(dv_id: str) -> str:
 # 6. Import via _import API
 # ─────────────────────────────────────────────────────────────────────────────
 def import_saved_objects(ndjson: str):
-    print("[Kibana] Importing saved objects via _import API...")
+    logger.info("[Kibana] Importing saved objects via _import API...")
     files = {
         "file": ("export.ndjson", io.BytesIO(ndjson.encode("utf-8")), "application/ndjson")
     }
@@ -483,7 +604,7 @@ def import_saved_objects(ndjson: str):
         f"{KIBANA_URL}/api/saved_objects/_import?overwrite=true",
         files=files,
     )
-    print(f"[Kibana] _import response: HTTP {res.status_code}")
+    logger.info(f"[Kibana] _import response: HTTP {res.status_code}")
 
     if res.status_code in (200, 201):
         body    = res.json()
@@ -491,13 +612,13 @@ def import_saved_objects(ndjson: str):
         count   = body.get("successCount", 0)
         errors  = body.get("errors", [])
         if success:
-            print(f"[Kibana] Import successful — {count} object(s) created/updated.")
+            logger.info(f"[Kibana] Import successful — {count} object(s) created/updated.")
         else:
-            print(f"[Kibana] Import partially successful ({count} object(s)). Errors:")
+            logger.warning(f"[Kibana] Import partially successful ({count} object(s)). Errors:")
             for err in errors:
-                print(f"  ✗ {err.get('type')}/{err.get('id')}: {json.dumps(err.get('error', {}))}")
+                logger.warning(f"  - {err.get('type')}/{err.get('id')}: {json.dumps(err.get('error', {}))}")
     else:
-        print(f"[Kibana] Import failed ({res.status_code}):\n{res.text}")
+        logger.error(f"[Kibana] Import failed ({res.status_code}):\n{res.text}")
         sys.exit(1)
 
 
@@ -509,7 +630,7 @@ def build_dashboard():
     dv_id = get_or_create_data_view()
     ndjson = build_ndjson(dv_id)
     import_saved_objects(ndjson)
-    print(f"\n[Kibana] Dashboard ready → {KIBANA_URL}/app/dashboards#/view/{DASHBOARD_ID}\n")
+    logger.info(f"[Kibana] Dashboard ready -> {KIBANA_URL}/app/dashboards#/view/{DASHBOARD_ID}")
 
 
 if __name__ == "__main__":

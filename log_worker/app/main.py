@@ -13,9 +13,10 @@ logger = logging.getLogger(__name__)
 REDIS_HOST     = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT     = int(os.getenv("REDIS_PORT", 6379))
 ELASTIC_URL    = os.getenv("ELASTIC_URL", "http://elasticsearch:9200")
-ELASTIC_USER   = os.getenv("ELASTIC_USER", "elastic")
+ELASTIC_USERNAME = os.getenv("ELASTIC_USERNAME", os.getenv("ELASTIC_USER", "elastic"))
 ELASTIC_PASSWORD = os.getenv("ELASTIC_PASSWORD", "changeme")
 INDEX          = os.getenv("ELASTIC_INDEX", "selenium-events")
+REDIS_QUEUE_KEY = os.getenv("REDIS_QUEUE_KEY", "selenium_logs")
 BATCH_SIZE     = int(os.getenv("BATCH_SIZE", 50))
 MAX_WAIT_TIME  = float(os.getenv("MAX_WAIT_TIME", 2.0))
 
@@ -67,7 +68,7 @@ def connect_services():
 
             es = Elasticsearch(
                 ELASTIC_URL,
-                basic_auth=(ELASTIC_USER, ELASTIC_PASSWORD),
+                basic_auth=(ELASTIC_USERNAME, ELASTIC_PASSWORD),
                 verify_certs=False,
             )
             if not es.ping():
@@ -108,6 +109,76 @@ def setup_index(es):
             "lineno":          {"type": "integer"},
             "colno":           {"type": "integer"},
             "state":           {"type": "keyword"},
+
+            # Scroll depth
+            "max_depth_percent":         {"type": "integer"},
+            "current_depth_percent":     {"type": "integer"},
+            "page_height":               {"type": "integer"},
+            "viewport_height":           {"type": "integer"},
+
+            # Click coordinates
+            "page_x":                    {"type": "integer"},
+            "page_y":                    {"type": "integer"},
+
+            # Network request
+            "request_url":               {"type": "keyword"},
+            "request_method":            {"type": "keyword"},
+            "status_code":               {"type": "integer"},
+            "duration_ms":               {"type": "integer"},
+            "request_type":              {"type": "keyword"},
+            "success":                   {"type": "boolean"},
+
+            # Performance
+            "dom_content_loaded_ms":     {"type": "integer"},
+            "load_complete_ms":          {"type": "integer"},
+            "first_paint_ms":            {"type": "integer"},
+            "first_contentful_paint_ms": {"type": "integer"},
+            "dom_interactive_ms":        {"type": "integer"},
+            "redirect_count":            {"type": "integer"},
+            "transfer_size_bytes":       {"type": "long"},
+            "resource_count":            {"type": "integer"},
+
+            # Form submit
+            "form_id":                   {"type": "keyword"},
+            "form_action":               {"type": "keyword"},
+            "form_method":               {"type": "keyword"},
+            "field_count":               {"type": "integer"},
+            "target_xpath":              {"type": "keyword"},
+
+            # Clipboard
+            "action":                    {"type": "keyword"},
+            "target_tag":                {"type": "keyword"},
+            "target_id":                 {"type": "keyword"},
+
+            # Resize
+            "width":                     {"type": "integer"},
+            "height":                    {"type": "integer"},
+            "previous_width":            {"type": "integer"},
+            "previous_height":           {"type": "integer"},
+
+            # Connection
+            "status":                    {"type": "keyword"},
+            "effective_type":            {"type": "keyword"},
+            "downlink":                  {"type": "float"},
+
+            # Error details
+            "stack":                     {"type": "text"},
+            "level":                     {"type": "keyword"},
+            "args_count":                {"type": "integer"},
+
+            # Page unload
+            "time_on_page_ms":           {"type": "integer"},
+            "final_scroll_depth_percent": {"type": "integer"},
+            "event_count":               {"type": "integer"},
+
+            # Navigation
+            "navigation_type":           {"type": "keyword"},
+            "referrer":                  {"type": "keyword"},
+            "from_url":                  {"type": "keyword"},
+
+            # Context menu
+            "x":                         {"type": "integer"},
+            "y":                         {"type": "integer"},
         }
     }
     try:
@@ -126,14 +197,14 @@ def process_logs():
     r, es = connect_services()
     setup_index(es)
 
-    logger.info("Starting log consumption from queue 'selenium_logs'")
+    logger.info(f"Starting log consumption from queue '{REDIS_QUEUE_KEY}'")
 
     while True:
         batch      = []
         start_time = time.time()
 
         while len(batch) < BATCH_SIZE and (time.time() - start_time) < MAX_WAIT_TIME:
-            item = r.brpop("selenium_logs", timeout=1)
+            item = r.brpop(REDIS_QUEUE_KEY, timeout=1)
             if item:
                 _, data = item
                 try:

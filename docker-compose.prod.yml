@@ -1,8 +1,9 @@
 services:
 
   redis:
-    image: redis:8.6-alpine        # Güncel: 8.6 (2025 stabil LTS) | Önceki: redis:7
+    image: redis:8.6-alpine
     container_name: redis
+    restart: unless-stopped
     networks:
       - tracker-net
     ports:
@@ -15,8 +16,9 @@ services:
       start_period: 5s
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:9.3.2   # Güncel: 9.3.2 (2026-03-19) | Önceki: 8.12.0
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.3.2
     container_name: elasticsearch
+    restart: unless-stopped
     environment:
       - discovery.type=${DISCOVERY_TYPE}
       - xpack.security.enabled=${XPACK_SECURITY_ENABLED}
@@ -28,6 +30,8 @@ services:
       - tracker-net
     ports:
       - "${ELASTICSEARCH_PORT:-9200}:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
     healthcheck:
       test: ["CMD-SHELL", "curl -s -k -u elastic:${ELASTIC_PASSWORD} ${ELASTIC_URL}/_cluster/health || exit 1"]
       interval: 10s
@@ -61,9 +65,9 @@ services:
     entrypoint: python3 /app/main.py
 
   kibana:
-    image: docker.elastic.co/kibana/kibana:9.3.2   # Güncel: 9.3.2 (ES ile sürüm eşleşmeli) | Önceki: 8.12.0
+    image: docker.elastic.co/kibana/kibana:9.3.2
     container_name: kibana
-    restart: on-failure
+    restart: unless-stopped
     ports:
       - "${KIBANA_PORT:-5601}:5601"
     environment:
@@ -131,43 +135,10 @@ services:
       - REDIS_QUEUE_KEY=${REDIS_QUEUE_KEY}
     entrypoint: python3 /app/main.py
 
-  web-app:
-    restart: unless-stopped
-    build:
-      context: ./web_app
-      dockerfile: Dockerfile
-    container_name: web_app
-    networks:
-      - tracker-net
-    ports:
-      - "${WEB_APP_PORT:-8081}:8081"
-    depends_on:
-      log-worker:
-        condition: service_started
-    environment:
-      - PORT=8081
-      - HOST=0.0.0.0
-      - LOGSERVER_EXTERNAL_URL=${LOGSERVER_EXTERNAL_URL}
-      - LOGSERVER_INTERNAL_URL=${LOGSERVER_INTERNAL_URL}
-      - DEBUG=${DEBUG}
-    entrypoint: python3 /app/app.py
-
-  selenium-test:
-    restart: unless-stopped
-    build:
-      context: ./selenium_test
-      dockerfile: Dockerfile
-    container_name: selenium_test
-    networks:
-      - tracker-net
-    depends_on:
-      web-app:
-        condition: service_started
-    environment:
-      - WEB_APP_URL=http://web-app:${WEB_APP_PORT}
-      - CHROMEDRIVER_PATH=${CHROMEDRIVER_PATH}
-    entrypoint: python3 /app/main.py
-
 networks:
   tracker-net:
     driver: bridge
+
+volumes:
+  es-data:
+    driver: local
