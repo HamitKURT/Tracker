@@ -30,7 +30,7 @@
 
 
     // PRODUCTION - Uncomment before the deployment ----------------------------
-    // var ENDPOINT_URL = window.ENV_LOGSERVER_URL
+    // var ENDPOINT_URL = window.ENV_LOGSERVER_URL;
     // -------------------------------------------------------------------------
 
     var CONFIG = {
