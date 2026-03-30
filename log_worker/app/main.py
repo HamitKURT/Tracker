@@ -83,42 +83,66 @@ def connect_services():
 def setup_index(es):
     mappings = {
         "properties": {
-            "@timestamp":      {"type": "date"},
-            "client_time":     {"type": "date"},
-            "session_id":      {"type": "keyword"},
-            "type":            {"type": "keyword"},
-            "event":           {"type": "keyword"},
-            "url":             {"type": "keyword"},
-            "user_agent":      {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
-            "is_webdriver":    {"type": "boolean"},
-            "language":        {"type": "keyword"},
-            "screen_resolution": {"type": "keyword"},
-            "tag":             {"type": "keyword"},
-            "id":              {"type": "keyword"},
-            "class":           {"type": "keyword"},
-            "name":            {"type": "keyword"},
-            "xpath":           {"type": "keyword"},
-            "selector":        {"type": "keyword"},
-            "method":          {"type": "keyword"},
-            "found":           {"type": "boolean"},
-            "value_length":    {"type": "integer"},
-            "suspicious":      {"type": "boolean"},
-            "interval_ms":     {"type": "integer"},
-            "message":         {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
-            "source":          {"type": "keyword"},
-            "lineno":          {"type": "integer"},
-            "colno":           {"type": "integer"},
-            "state":           {"type": "keyword"},
+            # Base fields
+            "@timestamp":                {"type": "date"},
+            "client_time":               {"type": "date"},
+            "time":                      {"type": "date"},
+            "session_id":                {"type": "keyword"},
+            "type":                      {"type": "keyword"},
+            "event":                     {"type": "keyword"},
+            "url":                       {"type": "keyword"},
+            "user_agent":                {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "is_webdriver":              {"type": "boolean"},
+            "language":                   {"type": "keyword"},
+            "screen_resolution":         {"type": "keyword"},
 
-            # Scroll depth
-            "max_depth_percent":         {"type": "integer"},
-            "current_depth_percent":     {"type": "integer"},
-            "page_height":               {"type": "integer"},
-            "viewport_height":           {"type": "integer"},
+            # Element info
+            "tag":                       {"type": "keyword"},
+            "id":                        {"type": "keyword"},
+            "class":                     {"type": "keyword"},
+            "name":                      {"type": "keyword"},
+            "xpath":                     {"type": "keyword"},
+            "selector":                  {"type": "keyword"},
+            "target_xpath":              {"type": "keyword"},
+            "anchor_xpath":              {"type": "keyword"},
+            "focus_xpath":               {"type": "keyword"},
 
-            # Click coordinates
+            # DOM Query
+            "method":                    {"type": "keyword"},
+            "found":                     {"type": "boolean"},
+            "result_count":              {"type": "integer"},
+            "result":                    {"type": "boolean"},
+
+            # Element Inspection
+            "width":                     {"type": "float"},
+            "height":                    {"type": "float"},
+            "pseudo":                    {"type": "keyword"},
+            "value":                     {"type": "text"},
+
+            # Data Extraction
+            "attribute":                 {"type": "keyword"},
+
+            # Interaction
+            "is_trusted":                {"type": "boolean"},
             "page_x":                    {"type": "integer"},
             "page_y":                    {"type": "integer"},
+            "value_length":              {"type": "integer"},
+
+            # Timing Alert
+            "suspicious":                {"type": "boolean"},
+            "interval_ms":                {"type": "integer"},
+
+            # JS Error
+            "message":                   {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "source":                    {"type": "keyword"},
+            "lineno":                    {"type": "integer"},
+            "colno":                     {"type": "integer"},
+            "stack":                     {"type": "text"},
+            "level":                     {"type": "keyword"},
+            "args_count":                {"type": "integer"},
+
+            # Visibility
+            "state":                     {"type": "keyword"},
 
             # Network request
             "request_url":               {"type": "keyword"},
@@ -135,40 +159,36 @@ def setup_index(es):
             "first_contentful_paint_ms": {"type": "integer"},
             "dom_interactive_ms":        {"type": "integer"},
             "redirect_count":            {"type": "integer"},
-            "transfer_size_bytes":       {"type": "long"},
-            "resource_count":            {"type": "integer"},
+            "transfer_size_bytes":        {"type": "long"},
+            "resource_count":             {"type": "integer"},
 
             # Form submit
             "form_id":                   {"type": "keyword"},
             "form_action":               {"type": "keyword"},
             "form_method":               {"type": "keyword"},
             "field_count":               {"type": "integer"},
-            "target_xpath":              {"type": "keyword"},
 
             # Clipboard
             "action":                    {"type": "keyword"},
             "target_tag":                {"type": "keyword"},
             "target_id":                 {"type": "keyword"},
+            "clipboard_length":          {"type": "integer"},
+
+            # Context menu & mouse
+            "x":                         {"type": "integer"},
+            "y":                         {"type": "integer"},
 
             # Resize
-            "width":                     {"type": "integer"},
-            "height":                    {"type": "integer"},
             "previous_width":            {"type": "integer"},
             "previous_height":           {"type": "integer"},
 
             # Connection
-            "status":                    {"type": "keyword"},
-            "effective_type":            {"type": "keyword"},
+            "effective_type":           {"type": "keyword"},
             "downlink":                  {"type": "float"},
-
-            # Error details
-            "stack":                     {"type": "text"},
-            "level":                     {"type": "keyword"},
-            "args_count":                {"type": "integer"},
+            "status":                    {"type": "keyword"},
 
             # Page unload
             "time_on_page_ms":           {"type": "integer"},
-            "final_scroll_depth_percent": {"type": "integer"},
             "event_count":               {"type": "integer"},
 
             # Navigation
@@ -176,9 +196,25 @@ def setup_index(es):
             "referrer":                  {"type": "keyword"},
             "from_url":                  {"type": "keyword"},
 
-            # Context menu
-            "x":                         {"type": "integer"},
-            "y":                         {"type": "integer"},
+            # Automation Detection
+            "signals":                   {"type": "object", "enabled": True},
+            "severity":                  {"type": "keyword"},
+
+            # Automation Alerts
+            "alert":                     {"type": "keyword"},
+
+            # MutationObserver
+            "mutation_count":            {"type": "integer"},
+            "subtree":                   {"type": "boolean"},
+
+            # Selection
+            "selected_text":             {"type": "text"},
+
+            # Value Manipulation
+            "input_type":                {"type": "keyword"},
+            "checked":                   {"type": "boolean"},
+            "value_preview":             {"type": "text"},
+            "is_suspicious_stack":       {"type": "boolean"},
         }
     }
     try:

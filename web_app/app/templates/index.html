@@ -20,7 +20,7 @@
         }
 
         .container {
-            max-width: 600px;
+            max-width: 800px;
             margin: auto;
             background: white;
             padding: 20px;
@@ -28,10 +28,9 @@
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         }
 
-        h1 {
-            text-align: center;
-            color: #0056b3;
-        }
+        h1 { text-align: center; color: #0056b3; }
+        h2 { color: #333; border-bottom: 2px solid #0056b3; padding-bottom: 5px; }
+        h3 { color: #666; margin-top: 20px; }
 
         .form-group {
             margin-bottom: 15px;
@@ -44,7 +43,11 @@
         }
 
         input[type="text"],
-        input[type="password"] {
+        input[type="password"],
+        input[type="email"],
+        input[type="number"],
+        input[type="tel"],
+        input[type="search"] {
             width: 100%;
             padding: 10px;
             border: 1px solid #ccc;
@@ -52,21 +55,50 @@
             box-sizing: border-box;
         }
 
-        button {
+        input[type="checkbox"],
+        input[type="radio"] {
+            margin-right: 10px;
+        }
+
+        select {
             width: 100%;
             padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+            min-height: 80px;
+        }
+
+        button {
+            padding: 10px 20px;
             background-color: #0056b3;
             color: white;
             border: none;
             border-radius: 4px;
             cursor: pointer;
-            font-size: 16px;
-            margin-top: 10px;
+            font-size: 14px;
+            margin: 5px;
         }
 
-        button:hover {
-            background-color: #004494;
-        }
+        button:hover { background-color: #004494; }
+        button:active { background-color: #003366; }
+
+        .error-btn { background-color: #dc3545; }
+        .error-btn:hover { background-color: #c82333; }
+
+        .success-btn { background-color: #28a745; }
+        .success-btn:hover { background-color: #218838; }
+
+        .warning-btn { background-color: #ffc107; color: #333; }
+        .warning-btn:hover { background-color: #e0a800; }
 
         .test-section {
             margin-top: 30px;
@@ -74,16 +106,153 @@
             padding-top: 20px;
         }
 
-        .error-btn {
-            background-color: #dc3545;
+        .hidden-element { visibility: hidden; }
+        .display-none { display: none; }
+
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 10px 0;
+            background: #f9f9f9;
         }
 
-        .error-btn:hover {
-            background-color: #c82333;
+        .card-header {
+            font-weight: bold;
+            margin-bottom: 10px;
+            padding-bottom: 5px;
+            border-bottom: 1px solid #eee;
         }
 
-        .hidden-element {
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+        }
+
+        .flex-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+
+        table th, table td {
+            border: 1px solid #ddd;
+            padding: 10px;
+            text-align: left;
+        }
+
+        table th { background-color: #f4f4f4; }
+
+        ul, ol {
+            margin: 10px 0;
+            padding-left: 25px;
+        }
+
+        li { margin: 5px 0; }
+
+        .data-table-container {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: #0056b3;
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+        }
+
+        .modal-content {
+            background: white;
+            margin: 100px auto;
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 400px;
+        }
+
+        .tab-container {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .tab-header {
+            display: flex;
+            background: #f4f4f4;
+        }
+
+        .tab-button {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+        }
+
+        .tab-button.active {
+            background: #0056b3;
+            color: white;
+        }
+
+        .tab-content {
+            padding: 15px;
+            display: none;
+        }
+
+        .tab-content.active { display: block; }
+
+        .drag-target {
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            margin: 10px 0;
+        }
+
+        .tooltip {
+            position: relative;
+            display: inline-block;
+        }
+
+        .tooltip-text {
             visibility: hidden;
+            background: #333;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%;
+            left: 50%;
+            transform: translateX(-50%);
+            white-space: nowrap;
         }
     </style>
 </head>
@@ -91,44 +260,356 @@
 <body>
 
     <div class="container">
-        <h1>Tracker App Login</h1>
-        <p style="text-align: center; color: #666;">Perform actions to generate telemetry data.</p>
+        <h1>Tracker Demonstration App</h1>
+        <p style="text-align: center; color: #666;">Comprehensive telemetry testing interface</p>
 
-        <div class="form-group">
-            <label for="username">Username</label>
-            <input type="text" id="username" name="username" placeholder="Enter test username">
+        <!-- Form Elements Section -->
+        <div class="card">
+            <div class="card-header">Text Inputs</div>
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" placeholder="Enter username">
+            </div>
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" placeholder="Enter email">
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" placeholder="Enter password">
+            </div>
+            <div class="form-group">
+                <label for="search">Search</label>
+                <input type="search" id="search" name="search" placeholder="Search...">
+            </div>
+            <div class="form-group">
+                <label for="number">Number Input</label>
+                <input type="number" id="number" name="number" min="0" max="100" placeholder="0">
+            </div>
+            <div class="form-group">
+                <label for="phone">Phone</label>
+                <input type="tel" id="phone" name="phone" placeholder="+1 234 567 8900">
+            </div>
         </div>
 
-        <div class="form-group">
-            <label for="password">Password</label>
-            <input type="password" id="password" name="password" placeholder="Enter test password">
+        <!-- Checkboxes and Radios -->
+        <div class="card">
+            <div class="card-header">Checkboxes and Radio Buttons</div>
+            <div class="flex-row">
+                <label><input type="checkbox" id="check1" name="checkbox" value="1"> Option 1</label>
+                <label><input type="checkbox" id="check2" name="checkbox" value="2"> Option 2</label>
+                <label><input type="checkbox" id="check3" name="checkbox" value="3"> Option 3</label>
+            </div>
+            <div class="flex-row" style="margin-top: 10px;">
+                <label><input type="radio" id="radio1" name="radio" value="a"> Radio A</label>
+                <label><input type="radio" id="radio2" name="radio" value="b"> Radio B</label>
+                <label><input type="radio" id="radio3" name="radio" value="c"> Radio C</label>
+            </div>
         </div>
 
-        <button id="login" onclick="simulateLogin()">Simulate Login</button>
+        <!-- Select and Textarea -->
+        <div class="card">
+            <div class="card-header">Select and Textarea</div>
+            <div class="form-group">
+                <label for="country">Country</label>
+                <select id="country" name="country">
+                    <option value="">Select country</option>
+                    <option value="us">United States</option>
+                    <option value="uk">United Kingdom</option>
+                    <option value="de">Germany</option>
+                    <option value="fr">France</option>
+                    <option value="tr">Turkey</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="comments">Comments</label>
+                <textarea id="comments" name="comments" placeholder="Enter your comments..."></textarea>
+            </div>
+        </div>
 
+        <!-- Buttons -->
+        <div class="card">
+            <div class="card-header">Action Buttons</div>
+            <div class="flex-row">
+                <button id="login" class="success-btn" onclick="simulateLogin()">Login</button>
+                <button id="register" onclick="simulateRegister()">Register</button>
+                <button id="cancel" onclick="simulateCancel()">Cancel</button>
+                <button id="reset" onclick="simulateReset()">Reset Form</button>
+            </div>
+            <div class="flex-row" style="margin-top: 10px;">
+                <button id="testButton" class="success-btn">Normal Click</button>
+                <button id="multiClickBtn">Rapid Click</button>
+                <button id="errorGenerator" class="error-btn" onclick="generateError()">Trigger Error</button>
+                <button id="warningBtn" class="warning-btn" onclick="triggerWarning()">Trigger Warning</button>
+            </div>
+        </div>
+
+        <!-- Interactive Elements -->
+        <div class="card">
+            <div class="card-header">Interactive Elements</div>
+            <div class="tooltip">
+                <span>Hover for tooltip</span>
+                <span class="tooltip-text">This is a tooltip</span>
+            </div>
+            <div style="margin: 15px 0;">
+                <label>Progress:</label>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <button onclick="updateProgress()">Update Progress</button>
+            </div>
+            <div>
+                <button onclick="toggleModal()">Open Modal</button>
+                <div class="modal" id="testModal">
+                    <div class="modal-content">
+                        <h3>Test Modal</h3>
+                        <p>This is a modal dialog for testing.</p>
+                        <button onclick="toggleModal()">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="card">
+            <div class="card-header">Tabs</div>
+            <div class="tab-container">
+                <div class="tab-header">
+                    <button class="tab-button active" onclick="openTab(event, 'tab1')">Tab 1</button>
+                    <button class="tab-button" onclick="openTab(event, 'tab2')">Tab 2</button>
+                    <button class="tab-button" onclick="openTab(event, 'tab3')">Tab 3</button>
+                </div>
+                <div id="tab1" class="tab-content active">
+                    <p>Content for Tab 1 - Form inputs are tracked here.</p>
+                    <input type="text" placeholder="Tab 1 input">
+                </div>
+                <div id="tab2" class="tab-content">
+                    <p>Content for Tab 2 - More interactions to track.</p>
+                    <input type="text" placeholder="Tab 2 input">
+                </div>
+                <div id="tab3" class="tab-content">
+                    <p>Content for Tab 3 - Additional test data.</p>
+                    <input type="text" placeholder="Tab 3 input">
+                </div>
+            </div>
+        </div>
+
+        <!-- Table -->
+        <div class="card">
+            <div class="card-header">Data Table</div>
+            <div class="data-table-container">
+                <table id="dataTable">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>1</td>
+                            <td>John Doe</td>
+                            <td>john@example.com</td>
+                            <td><span class="status-active">Active</span></td>
+                        </tr>
+                        <tr>
+                            <td>2</td>
+                            <td>Jane Smith</td>
+                            <td>jane@example.com</td>
+                            <td><span class="status-inactive">Inactive</span></td>
+                        </tr>
+                        <tr>
+                            <td>3</td>
+                            <td>Bob Johnson</td>
+                            <td>bob@example.com</td>
+                            <td><span class="status-pending">Pending</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <button onclick="addTableRow()">Add Row</button>
+            <button onclick="removeTableRow()">Remove Row</button>
+        </div>
+
+        <!-- Lists -->
+        <div class="card">
+            <div class="card-header">Lists</div>
+            <ul id="itemList">
+                <li>List Item 1</li>
+                <li>List Item 2</li>
+                <li>List Item 3</li>
+            </ul>
+            <button onclick="addListItem()">Add Item</button>
+            <button onclick="removeListItem()">Remove Item</button>
+        </div>
+
+        <!-- Drag and Drop Area -->
+        <div class="card">
+            <div class="card-header">Drag and Drop Area</div>
+            <div class="drag-target" id="dropZone">
+                <p>Drag files here or click to select</p>
+            </div>
+        </div>
+
+        <!-- Test Section -->
         <div class="test-section">
             <h3>Feature Tests</h3>
-            <button id="testButton">Normal Interaction Click</button>
-            <button id="errorGenerator" class="error-btn" onclick="generateError()">Trigger JS Error</button>
             <p>Switch tabs to trigger visibility change events.</p>
+            <p>Right-click anywhere to trigger context menu events.</p>
+            <p>Select text to trigger selection events.</p>
+            <p>Resize the browser window to trigger resize events.</p>
             <a href="/dashboard">Navigate to Another Page</a>
+        </div>
+
+        <!-- Hidden Elements for Testing -->
+        <div class="hidden-element" id="hiddenDiv">
+            <input type="text" value="hidden input value">
+        </div>
+        <div class="display-none" id="displayNoneDiv">
+            <input type="text" value="display none input">
         </div>
     </div>
 
     <script>
+        // Login simulation
         function simulateLogin() {
             const user = document.getElementById("username").value;
-            // querySelector trigger for tracker
+            const pass = document.getElementById("password").value;
             const btn = document.querySelector("#login");
-
+            const email = document.querySelector("#email");
+            
             console.log("Simulated login for:", user);
-            alert("Simulated login check network log!");
+            alert("Simulated login - check network logs!");
         }
 
+        // Register simulation
+        function simulateRegister() {
+            const username = document.getElementById("username").value;
+            const email = document.getElementById("email").value;
+            const country = document.getElementById("country").value;
+            const comments = document.getElementById("comments").value;
+            
+            console.log("Registration:", { username, email, country, commentsLength: comments.length });
+        }
+
+        // Cancel simulation
+        function simulateCancel() {
+            console.log("Form cancelled");
+            document.querySelectorAll('input, textarea, select').forEach(el => {
+                if (el.type !== 'checkbox' && el.type !== 'radio') {
+                    el.value = '';
+                }
+            });
+        }
+
+        // Reset simulation
+        function simulateReset() {
+            console.log("Form reset");
+        }
+
+        // Error generation
         function generateError() {
-            // This will throw a reference error to test our window.onerror tracker
             undefinedFunctionThatCausesError();
         }
+
+        // Warning trigger
+        function triggerWarning() {
+            console.warn("This is a test warning message");
+        }
+
+        // Progress update
+        function updateProgress() {
+            const fill = document.getElementById("progressFill");
+            let width = 0;
+            const interval = setInterval(() => {
+                width += 10;
+                fill.style.width = width + "%";
+                if (width >= 100) clearInterval(interval);
+            }, 100);
+        }
+
+        // Modal toggle
+        function toggleModal() {
+            const modal = document.getElementById("testModal");
+            modal.style.display = modal.style.display === "block" ? "none" : "block";
+        }
+
+        // Tab switching
+        function openTab(evt, tabName) {
+            document.querySelectorAll(".tab-content").forEach(el => el.classList.remove("active"));
+            document.querySelectorAll(".tab-button").forEach(el => el.classList.remove("active"));
+            document.getElementById(tabName).classList.add("active");
+            evt.currentTarget.classList.add("active");
+        }
+
+        // Table operations
+        function addTableRow() {
+            const table = document.getElementById("dataTable").getElementsByTagName('tbody')[0];
+            const row = table.insertRow();
+            row.innerHTML = `
+                <td>${table.rows.length}</td>
+                <td>New User</td>
+                <td>newuser@example.com</td>
+                <td>Active</td>
+            `;
+        }
+
+        function removeTableRow() {
+            const table = document.getElementById("dataTable").getElementsByTagName('tbody')[0];
+            if (table.rows.length > 1) table.deleteRow(table.rows.length - 1);
+        }
+
+        // List operations
+        function addListItem() {
+            const list = document.getElementById("itemList");
+            const li = document.createElement("li");
+            li.textContent = "New List Item " + (list.children.length + 1);
+            list.appendChild(li);
+        }
+
+        function removeListItem() {
+            const list = document.getElementById("itemList");
+            if (list.children.length > 1) list.removeChild(list.lastChild);
+        }
+
+        // Rapid click handler
+        document.getElementById("multiClickBtn").addEventListener("click", function() {
+            console.log("Multi-click button clicked");
+        });
+
+        // Drag and drop handlers
+        const dropZone = document.getElementById("dropZone");
+        dropZone.addEventListener("dragover", (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = "#0056b3";
+        });
+        dropZone.addEventListener("dragleave", () => {
+            dropZone.style.borderColor = "#ccc";
+        });
+        dropZone.addEventListener("drop", (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = "#ccc";
+            console.log("File dropped");
+        });
+
+        // Input event handlers
+        document.querySelectorAll('input, textarea, select').forEach(el => {
+            el.addEventListener("change", function() {
+                console.log("Input changed:", this.id || this.name, this.value);
+            });
+        });
+
+        // Initialize tooltip hover
+        document.querySelector('.tooltip').addEventListener("mouseenter", function() {
+            this.querySelector(".tooltip-text").style.visibility = "visible";
+        });
+        document.querySelector('.tooltip').addEventListener("mouseleave", function() {
+            this.querySelector(".tooltip-text").style.visibility = "hidden";
+        });
+
+        console.log("Tracker demonstration app loaded");
     </script>
 
 </body>
