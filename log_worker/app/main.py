@@ -16,31 +16,28 @@ ELASTIC_URL    = os.getenv("ELASTIC_URL", "http://elasticsearch:9200")
 ELASTIC_USERNAME = os.getenv("ELASTIC_USERNAME", os.getenv("ELASTIC_USER", "elastic"))
 ELASTIC_PASSWORD = os.getenv("ELASTIC_PASSWORD", "changeme")
 INDEX          = os.getenv("ELASTIC_INDEX", "selenium-events")
-REDIS_QUEUE_KEY = os.getenv("REDIS_QUEUE_KEY", "selenium_logs")
+REDIS_QUEUE_KEY = os.getenv("REDIS_QUEUE_KEY", "events_main")
 BATCH_SIZE     = int(os.getenv("BATCH_SIZE", 50))
 MAX_WAIT_TIME  = float(os.getenv("MAX_WAIT_TIME", 2.0))
 
 
 def now_utc() -> str:
-    """
-    Returns current UTC time in Elasticsearch-compatible ISO 8601 format.
-    Uses 'Z' suffix instead of '+00:00' — both are valid ISO 8601 but
-    Elasticsearch's strict_date_optional_time parser handles 'Z' reliably
-    across all versions. '+00:00' can cause silent parse failures in ES 8+/9+
-    which makes Kibana's time filter unable to locate the documents.
-    Example output: 2026-03-26T08:45:12.345Z
-    """
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 def normalise_timestamp(value) -> str | None:
-    """
-    Normalise an incoming timestamp string to the same Z-suffix format.
-    Accepts ISO 8601 strings with any UTC offset or Z suffix.
-    Returns None if the value cannot be parsed — field will be dropped
-    rather than causing the whole document to fail indexing.
-    """
-    if not value or not isinstance(value, str):
+    if not value:
+        return None
+    # Handle numeric timestamps (milliseconds since epoch from Date.now())
+    if isinstance(value, (int, float)):
+        try:
+            ts = value / 1000.0 if value > 1e12 else float(value)
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            return dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        except (ValueError, OSError, OverflowError):
+            logger.warning(f"Could not parse numeric timestamp: {value!r}")
+            return None
+    if not isinstance(value, str):
         return None
     for fmt in (
         "%Y-%m-%dT%H:%M:%S.%fZ",
@@ -81,140 +78,208 @@ def connect_services():
 
 
 def setup_index(es):
+    # Note: dynamic=true allows documents with additional/unknown fields to be indexed
+    # The explicit mappings below cover all known fields from performance.js
     mappings = {
+        "dynamic": "true",
         "properties": {
-            # Base fields
+            # Core fields
             "@timestamp":                {"type": "date"},
-            "client_time":               {"type": "date"},
+            "timestamp":                 {"type": "date"},
             "time":                      {"type": "date"},
-            "session_id":                {"type": "keyword"},
+            "client_time":               {"type": "date"},
+
+            "sessionId":                 {"type": "keyword"},
+            "pageId":                    {"type": "keyword"},
+            "correlationId":             {"type": "keyword"},
+            "parentId":                  {"type": "keyword"},
+            "eventId":                   {"type": "keyword"},
+            "uniqueId":                  {"type": "keyword"},
+
             "type":                      {"type": "keyword"},
-            "event":                     {"type": "keyword"},
-            "url":                       {"type": "keyword"},
-            "user_agent":                {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
-            "is_webdriver":              {"type": "boolean"},
-            "language":                   {"type": "keyword"},
-            "screen_resolution":         {"type": "keyword"},
-
-            # Element info
-            "tag":                       {"type": "keyword"},
-            "id":                        {"type": "keyword"},
-            "class":                     {"type": "keyword"},
-            "name":                      {"type": "keyword"},
-            "xpath":                     {"type": "keyword"},
-            "selector":                  {"type": "keyword"},
-            "target_xpath":              {"type": "keyword"},
-            "anchor_xpath":              {"type": "keyword"},
-            "focus_xpath":               {"type": "keyword"},
-
-            # DOM Query
             "method":                    {"type": "keyword"},
+            "url":                       {"type": "keyword"},
+            "from":                      {"type": "keyword"},
+            "to":                        {"type": "keyword"},
+
+            "userAgent":                 {"type": "text"},
+            "isAutomated":               {"type": "boolean"},
+            "isAutomationDetected":      {"type": "boolean"},
+            "isTrusted":                 {"type": "boolean"},
+            "uptime":                    {"type": "long"},
+
+            # Selector fields
+            "selector":                  {"type": "keyword"},
+            "selectorPath":              {"type": "keyword"},
+            "xpath":                     {"type": "keyword"},
+            "expression":                {"type": "keyword"},
             "found":                     {"type": "boolean"},
-            "result_count":              {"type": "integer"},
-            "result":                    {"type": "boolean"},
+            "isRepeatedFailure":         {"type": "boolean"},
+            "missCount":                 {"type": "integer"},
+            "matchCount":                {"type": "integer"},
+            "firstAttempt":              {"type": "long"},
+            "lastAttempt":               {"type": "long"},
+            "timeSinceFirst":            {"type": "long"},
+            "likelyIssue":               {"type": "keyword"},
 
-            # Element Inspection
-            "width":                     {"type": "float"},
-            "height":                    {"type": "float"},
-            "pseudo":                    {"type": "keyword"},
-            "value":                     {"type": "text"},
+            # Parent path fields
+            "parentPath":                {"type": "keyword"},
+            "parentTagName":             {"type": "keyword"},
+            "parentId":                  {"type": "keyword"},
+            "parentClasses":             {"type": "keyword"},
 
-            # Data Extraction
-            "attribute":                 {"type": "keyword"},
+            # Automation context
+            "automationContext":         {"type": "boolean"},
 
-            # Interaction
-            "is_trusted":                {"type": "boolean"},
-            "page_x":                    {"type": "integer"},
-            "page_y":                    {"type": "integer"},
-            "value_length":              {"type": "integer"},
+            # Selector analysis
+            "selectorTagName":           {"type": "keyword"},
+            "selectorId":                {"type": "keyword"},
+            "selectorClasses":           {"type": "keyword"},
+            "selectorAttributes":        {"type": "keyword"},
+            "selectorDetails":           {"type": "object"},
+            "pseudoClasses":             {"type": "keyword"},
+            "combinators":               {"type": "keyword"},
+            "xpathAnalysis":             {"type": "object"},
+            "containsText":              {"type": "boolean"},
+            "containsAttribute":         {"type": "boolean"},
+            "containsDescendant":        {"type": "boolean"},
+            "containsAxis":              {"type": "boolean"},
 
-            # Timing Alert
-            "suspicious":                {"type": "boolean"},
-            "interval_ms":                {"type": "integer"},
-
-            # JS Error
-            "message":                   {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            # Error fields
+            "message":                   {
+                "type": "text",
+                "fields": {
+                    "keyword": {
+                        "type": "keyword",
+                        "ignore_above": 2048
+                    }
+                }
+            },
+            "filename":                  {"type": "keyword"},
             "source":                    {"type": "keyword"},
             "lineno":                    {"type": "integer"},
             "colno":                     {"type": "integer"},
             "stack":                     {"type": "text"},
-            "level":                     {"type": "keyword"},
-            "args_count":                {"type": "integer"},
+            "args":                      {"type": "text"},
+            "errorThrown":               {"type": "keyword"},
+            "errorCode":                 {"type": "keyword"},
+            "reason":                    {"type": "text"},
+            "code":                      {"type": "integer"},
+            "warning":                   {"type": "keyword"},
 
-            # Visibility
-            "state":                     {"type": "keyword"},
-
-            # Network request
-            "request_url":               {"type": "keyword"},
-            "request_method":            {"type": "keyword"},
-            "status_code":               {"type": "integer"},
-            "duration_ms":               {"type": "integer"},
-            "request_type":              {"type": "keyword"},
-            "success":                   {"type": "boolean"},
-
-            # Performance
-            "dom_content_loaded_ms":     {"type": "integer"},
-            "load_complete_ms":          {"type": "integer"},
-            "first_paint_ms":            {"type": "integer"},
-            "first_contentful_paint_ms": {"type": "integer"},
-            "dom_interactive_ms":        {"type": "integer"},
-            "redirect_count":            {"type": "integer"},
-            "transfer_size_bytes":        {"type": "long"},
-            "resource_count":             {"type": "integer"},
-
-            # Form submit
-            "form_id":                   {"type": "keyword"},
-            "form_action":               {"type": "keyword"},
-            "form_method":               {"type": "keyword"},
-            "field_count":               {"type": "integer"},
-
-            # Clipboard
-            "action":                    {"type": "keyword"},
-            "target_tag":                {"type": "keyword"},
-            "target_id":                 {"type": "keyword"},
-            "clipboard_length":          {"type": "integer"},
-
-            # Context menu & mouse
-            "x":                         {"type": "integer"},
-            "y":                         {"type": "integer"},
-
-            # Resize
-            "previous_width":            {"type": "integer"},
-            "previous_height":           {"type": "integer"},
-
-            # Connection
-            "effective_type":           {"type": "keyword"},
-            "downlink":                  {"type": "float"},
+            # Network fields
+            "requestMethod":             {"type": "keyword"},
+            "requestUrl":                {"type": "keyword"},
             "status":                    {"type": "keyword"},
+            "statusCode":                {"type": "integer"},
+            "duration":                  {"type": "long"},
+            "success":                   {"type": "boolean"},
+            "pendingRequests":           {"type": "integer"},
 
-            # Page unload
-            "time_on_page_ms":           {"type": "integer"},
-            "event_count":               {"type": "integer"},
+            # Performance fields
+            "loadTime":                  {"type": "long"},
+            "idleMs":                    {"type": "long"},
+            "interval":                  {"type": "long"},
+            "slow":                      {"type": "boolean"},
 
-            # Navigation
-            "navigation_type":           {"type": "keyword"},
-            "referrer":                  {"type": "keyword"},
-            "from_url":                  {"type": "keyword"},
+            # DOM fields
+            "tagName":                   {"type": "keyword"},
+            "tag":                       {"type": "keyword"},
+            "src":                       {"type": "keyword"},
+            "textContent":               {"type": "text"},
+            "target":                    {"type": "keyword"},
+            "position":                  {"type": "keyword"},
+            "nodesAdded":                {"type": "integer"},
+            "nodesRemoved":              {"type": "integer"},
+            "totalRemoved":              {"type": "integer"},
+            "changes":                   {"type": "object"},
+            "totalChanges":              {"type": "integer"},
+            "removedElements":           {"type": "keyword"},
+            "count":                     {"type": "integer"},
+            "clickCount":                {"type": "integer"},
+            "attribute":                 {"type": "keyword"},
 
-            # Automation Detection
-            "signals":                   {"type": "object", "enabled": True},
-            "severity":                  {"type": "keyword"},
-
-            # Automation Alerts
-            "alert":                     {"type": "keyword"},
-
-            # MutationObserver
-            "mutation_count":            {"type": "integer"},
-            "subtree":                   {"type": "boolean"},
-
-            # Selection
-            "selected_text":             {"type": "text"},
-
-            # Value Manipulation
-            "input_type":                {"type": "keyword"},
+            # Form fields
+            "formAction":                {"type": "keyword"},
+            "formMethod":                {"type": "keyword"},
+            "invalidFields":             {"type": "object"},
+            "inputType":                 {"type": "keyword"},
             "checked":                   {"type": "boolean"},
+            "value_length":              {"type": "integer"},
             "value_preview":             {"type": "text"},
-            "is_suspicious_stack":       {"type": "boolean"},
+
+            # Security/CSP fields
+            "blockedURI":                {"type": "keyword"},
+            "violatedDirective":         {"type": "keyword"},
+            "originalPolicy":            {"type": "keyword"},
+
+            # Framework fields
+            "frameworks":                {"type": "object"},
+            "componentName":             {"type": "keyword"},
+            "componentStack":            {"type": "keyword"},
+            "zoneName":                  {"type": "keyword"},
+            "info":                      {"type": "keyword"},
+            "trace":                     {"type": "keyword"},
+
+            # Value manipulation
+            "oldValue":                  {"type": "text"},
+            "newValue":                  {"type": "text"},
+
+            # Other fields
+            "overlay":                   {"type": "object"},
+            "zIndex":                    {"type": "integer"},
+            "coverage":                  {"type": "integer"},
+            "pageUrl":                   {"type": "keyword"},
+            "details":                   {"type": "object"},
+            "text":                      {"type": "text"},
+
+            # Summary field
+            "summary":                   {"type": "keyword"},
+
+            # Frontend event fields
+            "severity":                  {"type": "keyword"},
+            "signals":                   {"type": "keyword"},
+            "gap":                       {"type": "integer"},
+            "first":                     {"type": "date"},
+            "last":                      {"type": "date"},
+
+            # Blocking overlay (also uses 'text' field defined above)
+            "name":                      {"type": "keyword"},
+            # Vue-specific fields
+            "msg":                       {"type": "text"},
+
+            # Automation extras
+            "rapidClickCount":           {"type": "integer"},
+            "connection":                {"type": "object"},
+            "element":                   {"type": "keyword"},
+            "elementInspection":         {"type": "object"},
+
+            # Queue/transport reliability fields
+            "droppedCount":              {"type": "integer"},
+            "queueSize":                 {"type": "integer"},
+            "retryAttempts":             {"type": "integer"},
+            "totalEventsInQueue":        {"type": "integer"},
+
+            # Dialog tracking fields
+            "dialogType":                {"type": "keyword"},
+            "hasResult":                 {"type": "boolean"},
+            "result":                    {"type": "boolean"},
+
+            # Keyboard tracking fields
+            "key":                       {"type": "keyword"},
+            "keyCode":                   {"type": "keyword"},
+            "modifiers":                 {"type": "keyword"},
+            "targetElement":             {"type": "keyword"},
+            "targetTagName":             {"type": "keyword"},
+
+            # Page load HTTP status
+            "httpStatus":                {"type": "integer"},
+
+            # Select element tracking
+            "selectedIndex":             {"type": "integer"},
+            "input_type":                {"type": "keyword"},
+
+            "_ctx":                      {"type": "object", "enabled": False},
         }
     }
     try:
@@ -224,7 +289,7 @@ def setup_index(es):
             logger.info("Index created successfully.")
         else:
             logger.info(f"Index '{INDEX}' already exists. Updating mappings.")
-            es.indices.put_mapping(index=INDEX, properties=mappings["properties"])
+            es.indices.put_mapping(index=INDEX, **mappings)
     except Exception as e:
         logger.warning(f"Error checking/creating index: {e}")
 
@@ -250,11 +315,24 @@ def process_logs():
                 except json.JSONDecodeError:
                     event = {"raw_data": data}
 
-                # Always overwrite @timestamp with a correctly formatted UTC value.
-                # isoformat() produces "+00:00" suffix which ES strict parser mishandles.
+                if "_ctx" in event and isinstance(event.get("_ctx"), dict):
+                    ctx = event.pop("_ctx")
+                    for k, v in ctx.items():
+                        if k not in event:
+                            event[k] = v
+
                 event["@timestamp"] = now_utc()
 
-                # Normalise client_time if present so Kibana can use it as a date field.
+                if "timestamp" in event and event["timestamp"]:
+                    normalised = normalise_timestamp(str(event["timestamp"]))
+                    if normalised:
+                        event["timestamp"] = normalised
+
+                if "time" in event and event["time"]:
+                    normalised = normalise_timestamp(str(event["time"]))
+                    if normalised:
+                        event["time"] = normalised
+
                 if "client_time" in event:
                     normalised = normalise_timestamp(event["client_time"])
                     if normalised:
@@ -265,11 +343,63 @@ def process_logs():
                 batch.append({"_index": INDEX, "_source": event})
 
         if batch:
-            try:
-                success, _ = bulk(es, batch)
-                logger.info(f"Successfully indexed {success} documents.")
-            except Exception as e:
-                logger.error(f"Elasticsearch bulk index failed: {e}")
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    # Use raise_on_error=False to get errors in response instead of exceptions
+                    success, errors = bulk(es, batch, raise_on_error=False)
+
+                    if errors and isinstance(errors, list):
+                        # errors is a list of failed item dicts like [{"index": {"error": {...}}}]
+                        failed_count = 0
+                        failed_reasons = set()
+                        failed_docs = []
+
+                        for idx, item in enumerate(errors):
+                            if isinstance(item, dict) and "index" in item:
+                                error_info = item["index"].get("error")
+                                if error_info:
+                                    failed_count += 1
+                                    err_type = error_info.get('type', 'unknown')
+                                    err_reason = error_info.get('reason', 'unknown')[:100]
+                                    failed_reasons.add(f"{err_type}: {err_reason}")
+
+                                    # Get the corresponding document from batch
+                                    # Note: errors list corresponds to failed items, we requeue all on failure
+                                    if idx < len(batch):
+                                        doc = batch[idx]["_source"]
+                                        logger.error(f"Failed doc #{idx}: {err_type} - {err_reason}. Doc: {json.dumps(doc)[:500]}")
+                                        failed_docs.append(doc)
+
+                        if failed_count > 0:
+                            logger.warning(f"Bulk index result: {success} succeeded, {failed_count} failed. Reasons: {failed_reasons}")
+                            # Re-queue only the failed documents
+                            if failed_docs:
+                                logger.error(f"Re-queuing {len(failed_docs)} failed events")
+                                for doc in failed_docs:
+                                    try:
+                                        r.lpush(REDIS_QUEUE_KEY + "_failed", json.dumps(doc))
+                                    except Exception as queue_err:
+                                        logger.error(f"Failed to re-queue event: {queue_err}")
+                            # Continue to next batch, don't retry already-failed docs
+                            break
+                    else:
+                        # No errors - success
+                        logger.info(f"Successfully indexed {success} documents.")
+                        break
+
+                except Exception as e:
+                    logger.error(f"Elasticsearch bulk index failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(1 * (attempt + 1))
+                    else:
+                        # On final attempt failure, re-queue all documents
+                        logger.error(f"Re-queuing all {len(batch)} documents after {max_retries} attempts")
+                        for item in batch:
+                            try:
+                                r.lpush(REDIS_QUEUE_KEY + "_failed", json.dumps(item["_source"]))
+                            except Exception as queue_err:
+                                logger.error(f"Failed to re-queue event: {queue_err}")
 
 
 if __name__ == "__main__":
