@@ -163,7 +163,7 @@ def setup_index(es):
             "args":                      {"type": "text"},
             "errorThrown":               {"type": "keyword"},
             "errorCode":                 {"type": "keyword"},
-            "reason":                    {"type": "text"},
+            "reason":                    {"type": "keyword"},
             "code":                      {"type": "integer"},
             "warning":                   {"type": "keyword"},
 
@@ -230,6 +230,7 @@ def setup_index(es):
             "zIndex":                    {"type": "integer"},
             "coverage":                  {"type": "integer"},
             "pageUrl":                   {"type": "keyword"},
+            "app":                       {"type": "keyword"},
             "details":                   {"type": "object"},
             "text":                      {"type": "text"},
 

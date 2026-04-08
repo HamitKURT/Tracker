@@ -184,6 +184,7 @@ def count_col(label="Count"):
     return {
         "dataType": "number",
         "isBucketed": False,
+        "customLabel": True,
         "label": label,
         "operationType": "count",
         "params": {"emptyAsNull": False},
@@ -191,50 +192,31 @@ def count_col(label="Count"):
     }
 
 
-def terms_col(label, field, order_col_id, size=10, missing_bucket=False):
+def terms_col(label, field, order_col_id, size=10, missing_bucket=False, other_bucket=True):
     return {
         "dataType": "string",
         "isBucketed": True,
+        "customLabel": True,
         "label": label,
         "operationType": "terms",
         "params": {
             "size": size,
             "orderBy": {"type": "column", "columnId": order_col_id},
             "orderDirection": "desc",
-            "otherBucket": True,
+            "otherBucket": other_bucket,
             "missingBucket": missing_bucket,
             "parentFormat": {"id": "terms"},
         },
         "sourceField": field,
     }
 
-
-def terms_col_all(label, field, order_col_id, size=10000, missing_bucket=False):
-    return {
-        "dataType": "string",
-        "isBucketed": True,
-        "label": label,
-        "operationType": "terms",
-        "params": {
-            "size": size,
-            "orderBy": {"type": "column", "columnId": order_col_id},
-            "orderDirection": "desc",
-            "otherBucket": False,
-            "missingBucket": missing_bucket,
-            "parentFormat": {"id": "terms"},
-            "include": [],
-            "includeIsRegex": False,
-            "exclude": [],
-            "excludeIsRegex": False,
-        },
-        "sourceField": field,
-    }
 
 
 def number_metric_col(label, field, operation="median"):
     return {
         "dataType": "number",
         "isBucketed": False,
+        "customLabel": True,
         "label": label,
         "operationType": operation,
         "params": {"emptyAsNull": False},
@@ -246,6 +228,7 @@ def unique_count_col(label, field):
     return {
         "dataType": "number",
         "isBucketed": False,
+        "customLabel": True,
         "label": label,
         "operationType": "unique_count",
         "params": {"emptyAsNull": False},
@@ -257,6 +240,7 @@ def date_histogram_col(interval="auto"):
     return {
         "dataType": "date",
         "isBucketed": True,
+        "customLabel": True,
         "label": "@timestamp",
         "operationType": "date_histogram",
         "params": {"dropPartials": False, "includeEmptyRows": True, "interval": interval},
@@ -310,19 +294,22 @@ def pie_visualization(layer_id, group_col_id, metric_col_id, shape="donut"):
     }
 
 
-def datatable_vis(layer_id, col_ids, sort_col):
+def datatable_vis(layer_id, col_ids, sort_col, transposed_cols=None):
     """Correct lnsDatatable visualization structure."""
+    if transposed_cols is None:
+        transposed_cols = set()
     return {
-        "layers": [{
-            "layerId": layer_id,
-            "layerType": "data",
-            "columns": [{"columnId": c, "isTransposed": False} for c in col_ids],
-            "sorting": {"columnId": sort_col, "direction": "desc"},
-            "rowHeight": "single",
-            "rowHeightLines": 1,
-            "headerRowHeight": "single",
-            "headerRowHeightLines": 1,
-        }],
+        "layerId": layer_id,
+        "layerType": "data",
+        "columns": [
+            {"columnId": c, "isTransposed": c in transposed_cols}
+            for c in col_ids
+        ],
+        "sorting": {"columnId": sort_col, "direction": "desc"},
+        "rowHeight": "single",
+        "rowHeightLines": 1,
+        "headerRowHeight": "single",
+        "headerRowHeightLines": 1,
     }
 
 
@@ -460,6 +447,7 @@ def build_metric(dv_id, vis_id, title, op="count", source_field=None,
         col = {
             "dataType": "number",
             "isBucketed": False,
+            "customLabel": True,
             "label": title,
             "operationType": op,
             "params": {"emptyAsNull": False},
@@ -472,19 +460,23 @@ def build_metric(dv_id, vis_id, title, op="count", source_field=None,
 
 def build_datatable(dv_id, vis_id, title, struct, sort_idx=-1, base_filter=None, description=""):
     """
-    struct: list of (label, dtype, field_or_op)
+    struct: list of (label, dtype, field_or_op[, size])
       dtype: "terms" | "count" | "unique_count" | "number"
       field_or_op for "number": (field, aggregation_op)
+      size: optional, only for "terms" dtype (default 10)
     """
     lid = uid()
     cols = {}
     col_order = []
 
-    for label, dtype, field_or_op in struct:
+    for item in struct:
+        label, dtype, field_or_op = item[0], item[1], item[2]
+        size = item[3] if len(item) > 3 else 10
+        other_bucket = item[4] if len(item) > 4 else True
         cid = uid()
         col_order.append(cid)
         if dtype == "terms":
-            cols[cid] = terms_col_all(label, field_or_op, "dummy")
+            cols[cid] = terms_col(label, field_or_op, "dummy", size=size, other_bucket=other_bucket)
         elif dtype == "number":
             cols[cid] = number_metric_col(label, field_or_op[0], field_or_op[1])
         elif dtype == "count":
@@ -500,6 +492,34 @@ def build_datatable(dv_id, vis_id, title, struct, sort_idx=-1, base_filter=None,
     layer = make_layer(cols, col_order, lid)
     return lens_obj(vis_id, title, "lnsDatatable", lid, layer,
                     datatable_vis(lid, col_order, col_order[sort_idx]),
+                    dv_id, base_filter, description)
+
+
+def build_pivot_datatable(dv_id, vis_id, title, row_field, row_label,
+                          pivot_field, pivot_label, pivot_size=20,
+                          row_size=50, base_filter=None, description=""):
+    """
+    Build a cross-tab / pivot datatable.
+    Rows = terms on row_field, columns = transposed terms on pivot_field,
+    cells = count metric.
+    """
+    lid = uid()
+    row_cid = uid()
+    pivot_cid = uid()
+    count_cid = uid()
+
+    cols = {
+        row_cid: terms_col(row_label, row_field, count_cid, size=row_size),
+        pivot_cid: terms_col(pivot_label, pivot_field, count_cid, size=pivot_size),
+        count_cid: count_col("Count"),
+    }
+    col_order = [row_cid, pivot_cid, count_cid]
+
+    layer = make_layer(cols, col_order, lid)
+    vis = datatable_vis(lid, col_order, count_cid,
+                        transposed_cols={pivot_cid})
+
+    return lens_obj(vis_id, title, "lnsDatatable", lid, layer, vis,
                     dv_id, base_filter, description)
 
 
@@ -551,418 +571,106 @@ ALL_ERROR_TYPES = [
 
 def get_comprehensive_dashboard(dv_id):
     """
-    Single, comprehensive dashboard covering all log types from performance.js.
-    Sections:
-      1. Summary KPIs
-      2. Global Timeline
-      3. Event & Severity Distribution
-      4. Errors (JS, Console, Unhandled Rejections, CSP)
-      5. Network (Requests, Failures, Slow)
-      6. Selectors & XPath
-      7. User Interactions & Forms
-      8. Navigation & Page Loads
-      9. DOM Mutations
-      10. Security Events
-      11. Automation Detection
-      12. Framework Errors (React / Angular / Vue)
-      13. Dialogs & Keyboard Actions
-      14. Element Inspection & Page Health
-      15. Transport Health & Session Lifecycle
+    Simplified dashboard with 4 sections:
+      1. KPI metrics row
+      2. Overview charts (timeline + type/severity distribution)
+      3. Error analysis (error timeline + error details table)
+      4. All events browser table
     """
 
-    # ── 1. SUMMARY KPIs ──────────────────────────────────────────────────────
-    v_total   = build_metric(dv_id, "v_kpi_total", "Total Events",
-                             subtitle="All captured log events", description="Count of all events in the index")
-    v_errors  = build_metric(dv_id, "v_kpi_errors", "Total Errors",
-                             base_filter=type_filter(ALL_ERROR_TYPES),
-                             subtitle="All error-type events", description="Count of all error events")
+    # ── 1. KPI ROW ───────────────────────────────────────────────────────────
+    v_total    = build_metric(dv_id, "v_kpi_total", "Total Events",
+                              subtitle="All events")
+    v_errors   = build_metric(dv_id, "v_kpi_errors", "Total Errors",
+                              base_filter=type_filter(ALL_ERROR_TYPES),
+                              subtitle="Error events")
     v_sessions = build_metric(dv_id, "v_kpi_sessions", "Unique Sessions",
                               op="unique_count", source_field="sessionId",
-                              subtitle="Distinct browser sessions", description="Unique sessionId values")
-    v_urls    = build_metric(dv_id, "v_kpi_urls", "Unique URLs",
-                             op="unique_count", source_field="url",
-                             subtitle="Distinct monitored pages", description="Unique url values")
-    v_high_sev = build_metric(dv_id, "v_kpi_high_sev", "High Severity Events",
+                              subtitle="Distinct sessions")
+    v_urls     = build_metric(dv_id, "v_kpi_urls", "Unique URLs",
+                              op="unique_count", source_field="url",
+                              subtitle="Distinct pages")
+    v_high_sev = build_metric(dv_id, "v_kpi_high_sev", "High Severity",
                               base_filter=term_filter("severity", "high"),
-                              subtitle="severity = high", description="Events with severity=high")
-    v_critical = build_metric(dv_id, "v_kpi_critical", "Critical Events",
+                              subtitle="severity = high")
+    v_critical = build_metric(dv_id, "v_kpi_critical", "Critical",
                               base_filter=term_filter("severity", "critical"),
-                              subtitle="severity = critical", description="Events with severity=critical")
+                              subtitle="severity = critical")
 
-    # ── 2. GLOBAL TIMELINE ────────────────────────────────────────────────────
-    v_global_ts = build_xy_time(dv_id, "v_global_ts", "All Events — Timeline",
-                                series="bar_stacked", description="All events over time")
-    v_error_ts  = build_xy_time(dv_id, "v_error_ts",  "Error Events — Timeline",
-                                base_filter=type_filter(ALL_ERROR_TYPES), series="area",
-                                description="All error events over time")
+    # ── 2. OVERVIEW ──────────────────────────────────────────────────────────
+    v_timeline    = build_xy_time(dv_id, "v_timeline", "Events Over Time",
+                                  series="bar_stacked")
+    v_by_type     = build_pie(dv_id, "v_by_type", "Events by Type",
+                              "type", shape="pie", size=20)
+    v_by_severity = build_pie(dv_id, "v_by_severity", "Events by Severity",
+                              "severity", shape="donut")
 
-    # ── 3. EVENT & SEVERITY DISTRIBUTION ─────────────────────────────────────
-    v_all_types   = build_pie(dv_id, "v_dist_types", "Events by Type",
-                              "type", shape="pie", size=20,
-                              description="Top 20 event types")
-    v_severity    = build_pie(dv_id, "v_dist_severity", "Events by Severity",
-                              "severity", shape="donut",
-                              description="Severity breakdown")
-    v_top_events  = build_datatable(dv_id, "v_top_events", "Top Event Types (All Time)",
-        [("Event Type", "terms", "type"), ("Count", "count", None)],
-        sort_idx=1, description="Ranked list of all event types")
-    v_top_urls    = build_datatable(dv_id, "v_top_urls", "Most Active Pages",
-        [("URL", "terms", "url"), ("Events", "count", None), ("Sessions", "unique_count", "sessionId")],
-        sort_idx=1, description="Pages with most events")
+    # ── 3. ERROR ANALYSIS ────────────────────────────────────────────────────
+    v_error_ts    = build_xy_time(dv_id, "v_error_ts", "Errors Over Time",
+                                  base_filter=type_filter(ALL_ERROR_TYPES),
+                                  series="area")
+    # ── 4. TABLES ────────────────────────────────────────────────────────────
 
-    # ── 4a. JAVASCRIPT ERRORS ─────────────────────────────────────────────────
-    js_filter = type_filter(["js-error", "unhandled-rejection"])
-    v_js_ts   = build_xy_time(dv_id, "v_js_ts", "JS Errors — Timeline",
-                              base_filter=js_filter, series="area",
-                              description="JS errors and unhandled rejections over time")
-    v_js_table = build_datatable(dv_id, "v_js_table", "JavaScript Errors — Details",
-        [("Message", "terms", "message.keyword"), ("File", "terms", "filename"),
-         ("Line", "number", ("lineno", "median")), ("Severity", "terms", "severity"),
-         ("Count", "count", None)],
-        sort_idx=4, base_filter=type_filter("js-error"),
-        description="Distinct JS error messages with frequency")
-    v_unhandled = build_datatable(dv_id, "v_unhandled", "Unhandled Promise Rejections",
-        [("Message", "terms", "message.keyword"), ("Page", "terms", "url"),
-         ("Count", "count", None)],
-        sort_idx=2, base_filter=type_filter("unhandled-rejection"),
-        description="Unhandled promise rejections by message")
+    # Table 1: Pivot cross-tab — rows=App(domain), columns=Type, cells=Count
+    v_pivot_table = build_pivot_datatable(
+        dv_id, "v_pivot_table", "Events by App and Type",
+        row_field="app", row_label="App",
+        pivot_field="type", pivot_label="Type",
+        pivot_size=25, row_size=50,
+        description="Cross-tab: apps vs event types")
 
-    # ── 4b. CONSOLE ERRORS / WARNINGS ────────────────────────────────────────
-    v_con_err  = build_datatable(dv_id, "v_con_err", "Console Errors",
-        [("Message", "terms", "message.keyword"), ("Page", "terms", "url"),
-         ("Count", "count", None)],
-        sort_idx=2, base_filter=type_filter("console-error"),
-        description="Browser console error messages")
-    v_con_warn = build_datatable(dv_id, "v_con_warn", "Console Warnings",
-        [("Message", "terms", "message.keyword"), ("Page", "terms", "url"),
-         ("Count", "count", None)],
-        sort_idx=2, base_filter=type_filter("console-warn"),
-        description="Browser console warning messages")
+    # Table 2: Last 15 High Severity Events
+    v_high_events = build_datatable(
+        dv_id, "v_high_events", "Last 15 High Severity Events",
+        [("App",      "terms", "app",       15),
+         ("Severity", "terms", "severity",   5),
+         ("Summary",  "terms", "summary",   15, False),
+         ("Count",    "count", None)],
+        sort_idx=-1,
+        base_filter=term_filter("severity", "high"),
+        description="Most recent high-severity events")
 
-    # ── 5. NETWORK ────────────────────────────────────────────────────────────
-    net_all_filter = type_filter(["fetch-error", "fetch-success", "fetch-slow",
-                                  "xhr-error", "xhr-success", "xhr-slow",
-                                  "resource-error"])
-    net_err_filter = type_filter(["fetch-error", "xhr-error", "resource-error"])
+    # Table 3: Last 30 Events
+    v_recent_events = build_datatable(
+        dv_id, "v_recent_events", "Last 30 Events",
+        [("App",      "terms", "app",       30),
+         ("Type",     "terms", "type",      30),
+         ("Summary",  "terms", "summary",   30, False),
+         ("Severity", "terms", "severity",   5),
+         ("Count",    "count", None)],
+        sort_idx=-1,
+        description="Most recent events across all types")
 
-    v_net_ts   = build_xy_time(dv_id, "v_net_ts", "Network Events — Timeline",
-                               base_filter=net_all_filter, series="line",
-                               description="Network request events over time")
-    v_net_dist = build_pie(dv_id, "v_net_dist", "Network Events by Type",
-                           "type", base_filter=net_all_filter, shape="donut", size=10,
-                           description="Distribution of network event types")
-    v_net_fail = build_datatable(dv_id, "v_net_fail", "Failed Network Requests",
-        [("Type", "terms", "type"), ("URL / Endpoint", "terms", "url"),
-         ("HTTP Status", "terms", "status"), ("Error Message", "terms", "message.keyword"),
-         ("Count", "count", None)],
-        sort_idx=4, base_filter=net_err_filter,
-        description="Failed fetch / XHR / resource requests")
-    v_net_slow = build_datatable(dv_id, "v_net_slow", "Slow Network Requests",
-        [("Type", "terms", "type"), ("URL", "terms", "url"),
-         ("Avg Duration (ms)", "number", ("duration", "avg")),
-         ("Max Duration (ms)", "number", ("duration", "max")),
-         ("Count", "count", None)],
-        sort_idx=4, base_filter=type_filter(["fetch-slow", "xhr-slow"]),
-        description="Slow fetch/XHR requests by endpoint")
+    # Table 4: Last 50 Events — App + Summary overview
+    v_last50_events = build_datatable(
+        dv_id, "v_last50_events", "Last 50 Events",
+        [("App",     "terms", "app",     50),
+         ("Summary", "terms", "summary", 50, False),
+         ("Count",   "count", None)],
+        sort_idx=-1,
+        description="Last 50 events with app and summary")
 
-    # ── 6. SELECTORS & XPATH ──────────────────────────────────────────────────
-    sel_filter = type_filter(["selector-miss", "selector-error", "selector-found", "xpath-error"])
-    v_sel_ts   = build_xy_time(dv_id, "v_sel_ts", "Selector Events — Timeline",
-                               base_filter=sel_filter, series="area",
-                               description="Selector/XPath query activity over time")
-    v_sel_dist = build_pie(dv_id, "v_sel_dist", "Selector Events by Type",
-                           "type", base_filter=sel_filter, shape="donut",
-                           description="Breakdown of selector event types")
-
-    css_miss_filter = [{
-        "meta": {"type": "custom", "disabled": False, "negate": False},
-        "query": {"bool": {
-            "must": [{"term": {"type": "selector-miss"}}],
-            "must_not": [{"term": {"method": "xpath"}}],
-        }},
-    }]
-    v_css_miss = build_datatable(dv_id, "v_css_miss", "Missing CSS Selectors",
-        [("Selector", "terms", "selector"), ("Method", "terms", "method"),
-         ("Miss Count (max)", "number", ("missCount", "max")),
-         ("Likely Issue", "terms", "likelyIssue"), ("Page", "terms", "url"),
-         ("Occurrences", "count", None)],
-        sort_idx=5, base_filter=css_miss_filter,
-        description="CSS selectors that failed to find elements")
-
-    xpath_miss_filter = [{
-        "meta": {"type": "custom", "disabled": False, "negate": False},
-        "query": {"bool": {
-            "should": [
-                {"term": {"type": "xpath-error"}},
-                {"bool": {"must": [{"term": {"type": "selector-miss"}}, {"term": {"method": "xpath"}}]}},
-            ],
-            "minimum_should_match": 1,
-        }},
-    }]
-    v_xpath_miss = build_datatable(dv_id, "v_xpath_miss", "XPath Errors & Misses",
-        [("XPath Expression", "terms", "xpath"), ("Type", "terms", "type"),
-         ("Message", "terms", "message.keyword"), ("Miss Count (max)", "number", ("missCount", "max")),
-         ("Page", "terms", "url"), ("Occurrences", "count", None)],
-        sort_idx=5, base_filter=xpath_miss_filter,
-        description="XPath expressions that failed or missed")
-
-    # ── 7. USER INTERACTIONS & FORMS ─────────────────────────────────────────
-    int_filter = type_filter(["user-click", "click-on-disabled", "programmatic-click",
-                               "rapid-clicks", "form-submission",
-                               "form-validation-failure", "value-manipulation"])
-    v_int_ts   = build_xy_time(dv_id, "v_int_ts", "User Interactions — Timeline",
-                               base_filter=int_filter, series="area",
-                               description="User activity events over time")
-    v_int_dist = build_pie(dv_id, "v_int_dist", "Interaction Events by Type",
-                           "type", base_filter=int_filter, shape="donut",
-                           description="Distribution of interaction types")
-    v_form_sub = build_datatable(dv_id, "v_form_sub", "Form Submissions",
-        [("Form Action", "terms", "formAction"), ("Method", "terms", "method"),
-         ("Page", "terms", "url"), ("Count", "count", None)],
-        sort_idx=3, base_filter=type_filter("form-submission"),
-        description="Form submission events by endpoint")
-    v_form_val = build_datatable(dv_id, "v_form_val", "Form Validation Failures",
-        [("Form Action", "terms", "formAction"), ("Page", "terms", "url"),
-         ("Count", "count", None)],
-        sort_idx=2, base_filter=type_filter("form-validation-failure"),
-        description="Form fields that failed validation")
-
-    # ── 8. NAVIGATION & PAGE LOADS ────────────────────────────────────────────
-    nav_filter = type_filter(["page-load", "hashchange", "pushState", "replaceState", "connection"])
-    v_nav_ts   = build_xy_time(dv_id, "v_nav_ts", "Navigation Events — Timeline",
-                               base_filter=nav_filter, series="line",
-                               description="Navigation events over time")
-    v_nav_dist = build_pie(dv_id, "v_nav_dist", "Navigation Events by Type",
-                           "type", base_filter=nav_filter, shape="pie",
-                           description="Distribution of navigation event types")
-    v_page_load = build_datatable(dv_id, "v_page_load", "Page Load Performance",
-        [("Page URL", "terms", "url"),
-         ("Avg Load Time (ms)", "number", ("loadTime", "avg")),
-         ("Max Load Time (ms)", "number", ("loadTime", "max")),
-         ("Load Events", "count", None)],
-        sort_idx=1, base_filter=type_filter("page-load"),
-        description="Page load times per URL")
-
-    # ── 9. DOM MUTATIONS ──────────────────────────────────────────────────────
-    dom_filter = type_filter(["dom-mutations", "dom-attribute-changes"])
-    v_dom_ts   = build_xy_time(dv_id, "v_dom_ts", "DOM Mutations — Timeline",
-                               base_filter=dom_filter, series="bar",
-                               description="DOM mutation events over time")
-    v_dom_table = build_datatable(dv_id, "v_dom_table", "DOM Mutation Details",
-        [("Type", "terms", "type"),
-         ("Nodes Added (max)", "number", ("nodesAdded", "max")),
-         ("Nodes Removed (max)", "number", ("nodesRemoved", "max")),
-         ("Total Changes (max)", "number", ("totalChanges", "max")),
-         ("Page", "terms", "url"), ("Count", "count", None)],
-        sort_idx=5, base_filter=dom_filter,
-        description="DOM change statistics per page")
-
-    # ── 10. SECURITY EVENTS ───────────────────────────────────────────────────
-    sec_filter = type_filter(["csp-violation", "websocket-error",
-                               "websocket-unclean-close", "blocking-overlay-detected"])
-    v_sec_ts   = build_xy_time(dv_id, "v_sec_ts", "Security Events — Timeline",
-                               base_filter=sec_filter, series="bar_stacked",
-                               description="Security-related events over time")
-    v_sec_dist = build_pie(dv_id, "v_sec_dist", "Security Events by Type",
-                           "type", base_filter=sec_filter, shape="donut",
-                           description="Distribution of security event types")
-    v_csp      = build_datatable(dv_id, "v_csp", "CSP Violations",
-        [("Blocked URI", "terms", "blockedURI"), ("Violated Directive", "terms", "violatedDirective"),
-         ("Source", "terms", "source"), ("Count", "count", None)],
-        sort_idx=3, base_filter=type_filter("csp-violation"),
-        description="Content Security Policy violations by resource")
-
-    # ── 11. AUTOMATION DETECTION ──────────────────────────────────────────────
-    auto_filter = type_filter(["automation-detected", "programmatic-click",
-                                "rapid-clicks"])
-    v_auto_ts   = build_xy_time(dv_id, "v_auto_ts", "Automation Detection — Timeline",
-                                base_filter=auto_filter, series="bar_stacked",
-                                description="Automation/suspicious events over time")
-    v_auto_dist = build_pie(dv_id, "v_auto_dist", "Automation Event Types",
-                            "type", base_filter=auto_filter, shape="donut",
-                            description="Distribution of automation detection event types")
-    v_auto_table = build_datatable(dv_id, "v_auto_table", "Automation — Session Details",
-        [("Session ID", "terms", "sessionId"), ("Event Type", "terms", "type"),
-         ("Page", "terms", "url"), ("Count", "count", None)],
-        sort_idx=3, base_filter=auto_filter,
-        description="Sessions with automation signals")
-
-    # ── 12. FRAMEWORK ERRORS ──────────────────────────────────────────────────
-    fw_filter = type_filter(["frameworks-detected",
-                              "react-error-boundary-triggered", "react-render-error",
-                              "react-hydration-mismatch", "react-key-warning",
-                              "react-function-component-warning", "react-root-render-crash",
-                              "angular-zone-error", "angular-framework-error",
-                              "angular-change-detection-error", "angular-zone-unstable",
-                              "vue-error", "vue-warning",
-                              "jquery-ajax-error", "jquery-deferred-error",
-                              "nextjs-runtime-error", "nuxt-error"])
-    v_fw_ts   = build_xy_time(dv_id, "v_fw_ts", "Framework Events — Timeline",
-                              base_filter=fw_filter, series="bar_stacked",
-                              description="Framework-level events over time")
-    v_fw_dist = build_pie(dv_id, "v_fw_dist", "Framework Events by Type",
-                          "type", base_filter=fw_filter, shape="donut", size=20,
-                          description="Distribution of framework event types")
-    v_react   = build_datatable(dv_id, "v_react", "React Errors",
-        [("Type", "terms", "type"), ("Component", "terms", "componentName"),
-         ("Message", "terms", "message.keyword"), ("Count", "count", None)],
-        sort_idx=3,
-        base_filter=type_filter(["react-error-boundary-triggered", "react-render-error",
-                                  "react-hydration-mismatch"]),
-        description="React framework errors by component")
-    v_angular = build_datatable(dv_id, "v_angular", "Angular Errors",
-        [("Type", "terms", "type"), ("Zone", "terms", "zoneName"),
-         ("Message", "terms", "message.keyword"), ("Count", "count", None)],
-        sort_idx=3,
-        base_filter=type_filter(["angular-zone-error", "angular-framework-error",
-                                  "angular-change-detection-error"]),
-        description="Angular framework errors by zone")
-    v_vue     = build_datatable(dv_id, "v_vue", "Vue Errors & Warnings",
-        [("Type", "terms", "type"), ("Message", "terms", "message.keyword"),
-         ("Count", "count", None)],
-        sort_idx=2, base_filter=type_filter(["vue-error", "vue-warning"]),
-        description="Vue.js errors and warnings")
-
-    # ── 13. DIALOGS & KEYBOARD ACTIONS ─────────────────────────────────────
-    dialog_filter = type_filter("dialog-opened")
-    v_dialog_table = build_datatable(dv_id, "v_dialog_table", "Browser Dialogs (alert / confirm / prompt)",
-        [("Dialog Type", "terms", "dialogType"), ("Message", "terms", "message.keyword"),
-         ("Page", "terms", "url"), ("Session", "terms", "sessionId"),
-         ("Count", "count", None)],
-        sort_idx=4, base_filter=dialog_filter,
-        description="Browser dialog events intercepted from alert, confirm, and prompt calls")
-
-    kb_filter = type_filter("keyboard-action")
-    v_kb_table = build_datatable(dv_id, "v_kb_table", "Keyboard Actions (Automation)",
-        [("Key", "terms", "key"), ("Modifiers", "terms", "modifiers"),
-         ("Target Tag", "terms", "targetTagName"),
-         ("Count", "count", None)],
-        sort_idx=3, base_filter=kb_filter,
-        description="Special key presses and shortcuts during automated sessions")
-
-    # ── 14. ELEMENT INSPECTION & PAGE HEALTH ─────────────────────────────────
-    inspect_filter = type_filter("element-inspection")
-    v_inspect_table = build_datatable(dv_id, "v_inspect_table", "Element Inspections (Automation)",
-        [("Method", "terms", "method"), ("Element", "terms", "xpath"),
-         ("Page", "terms", "url"), ("Count", "count", None)],
-        sort_idx=3, base_filter=inspect_filter,
-        description="getBoundingClientRect / getComputedStyle / offset* calls during automation")
-
-    idle_filter = type_filter("page-idle")
-    v_idle_table = build_datatable(dv_id, "v_idle_table", "Page Idle Events — Stuck Tests",
-        [("Page", "terms", "url"), ("Max Idle (ms)", "number", ("idleMs", "max")),
-         ("Session", "terms", "sessionId"), ("Count", "count", None)],
-        sort_idx=3, base_filter=idle_filter,
-        description="Pages where no user activity occurred for 30+ seconds — tests may be stuck")
-
-    # ── 15. TRANSPORT HEALTH & SESSION LIFECYCLE ─────────────────────────────
-    transport_filter = type_filter(["queue-overflow", "batch-dropped", "session-end"])
-    v_transport_ts = build_xy_time(dv_id, "v_transport_ts", "Transport & Session Events — Timeline",
-                                   base_filter=transport_filter, series="bar_stacked",
-                                   description="Queue overflows, dropped batches, and session endings over time")
-
-    v_overflow_table = build_datatable(dv_id, "v_overflow_table", "Queue Overflows & Dropped Batches",
-        [("Type", "terms", "type"),
-         ("Dropped Count (max)", "number", ("droppedCount", "max")),
-         ("Queue Size (max)", "number", ("queueSize", "max")),
-         ("Retry Attempts (max)", "number", ("retryAttempts", "max")),
-         ("Session", "terms", "sessionId"), ("Count", "count", None)],
-        sort_idx=5, base_filter=type_filter(["queue-overflow", "batch-dropped"]),
-        description="Events lost due to queue overflow or network failures")
-
-    v_session_table = build_datatable(dv_id, "v_session_table", "Session End Events",
-        [("Reason", "terms", "reason"), ("Events in Queue (max)", "number", ("totalEventsInQueue", "max")),
-         ("Session", "terms", "sessionId"), ("Page", "terms", "url"),
-         ("Count", "count", None)],
-        sort_idx=4, base_filter=type_filter("session-end"),
-        description="How browser sessions ended (beforeunload, pagehide, visibilitychange)")
-
-    v_connection_table = build_datatable(dv_id, "v_connection_table", "Connection Status Changes",
-        [("Status", "terms", "status"), ("Page", "terms", "url"),
-         ("Session", "terms", "sessionId"), ("Count", "count", None)],
-        sort_idx=3, base_filter=type_filter("connection"),
-        description="Browser online/offline connection status events")
-
-    v_value_table = build_datatable(dv_id, "v_value_table", "Value Manipulations (Automation)",
-        [("Method", "terms", "method"), ("Element", "terms", "xpath"),
-         ("Page", "terms", "url"), ("Count", "count", None)],
-        sort_idx=3, base_filter=type_filter("value-manipulation"),
-        description="Programmatic input/select/textarea value changes during automation")
-
-    # ── DASHBOARD PANEL LAYOUT ────────────────────────────────────────────────
-    # Grid is 48 units wide. Heights are also in grid units.
+    # ── LAYOUT ───────────────────────────────────────────────────────────────
     panels = [
-        # ── Section 1: KPI Summary Row ──
-        (v_total,     8, 8), (v_errors,   8, 8), (v_sessions,  8, 8),
-        (v_urls,      8, 8), (v_high_sev, 8, 8), (v_critical,  8, 8),
-
-        # ── Section 2: Global Timelines ──
-        (v_global_ts, 24, 14), (v_error_ts,  24, 14),
-
-        # ── Section 3: Event & Severity Distribution ──
-        (v_all_types,  24, 14), (v_severity,   24, 14),
-        (v_top_events, 24, 14), (v_top_urls,   24, 14),
-
-        # ── Section 4: JavaScript Errors ──
-        (v_js_ts,    48, 12),
-        (v_js_table, 32, 16), (v_unhandled, 16, 16),
-        (v_con_err,  24, 14), (v_con_warn,  24, 14),
-
-        # ── Section 5: Network ──
-        (v_net_ts,   24, 12), (v_net_dist, 24, 12),
-        (v_net_fail, 48, 16),
-        (v_net_slow, 48, 14),
-
-        # ── Section 6: Selectors & XPath ──
-        (v_sel_ts,    24, 12), (v_sel_dist, 24, 12),
-        (v_css_miss,  24, 16), (v_xpath_miss, 24, 16),
-
-        # ── Section 7: User Interactions & Forms ──
-        (v_int_ts,   24, 12), (v_int_dist, 24, 12),
-        (v_form_sub, 24, 14), (v_form_val, 24, 14),
-
-        # ── Section 8: Navigation & Page Loads ──
-        (v_nav_ts,    24, 12), (v_nav_dist,  24, 12),
-        (v_page_load, 48, 14),
-
-        # ── Section 9: DOM Mutations ──
-        (v_dom_ts,    24, 12), (v_dom_table, 24, 14),
-
-        # ── Section 10: Security ──
-        (v_sec_ts,   24, 12), (v_sec_dist, 24, 12),
-        (v_csp,      48, 14),
-
-        # ── Section 11: Automation Detection ──
-        (v_auto_ts,    24, 12), (v_auto_dist,  24, 12),
-        (v_auto_table, 48, 14),
-
-        # ── Section 12: Framework Errors ──
-        (v_fw_ts,   24, 12), (v_fw_dist, 24, 12),
-        (v_react,   16, 16), (v_angular, 16, 16), (v_vue, 16, 16),
-
-        # ── Section 13: Dialogs & Keyboard Actions ──
-        (v_dialog_table, 24, 14), (v_kb_table, 24, 14),
-
-        # ── Section 14: Element Inspection & Page Health ──
-        (v_inspect_table, 24, 14), (v_idle_table, 24, 14),
-
-        # ── Section 15: Transport Health & Session Lifecycle ──
-        (v_transport_ts, 48, 12),
-        (v_overflow_table, 24, 14), (v_session_table, 24, 14),
-        (v_connection_table, 24, 14), (v_value_table, 24, 14),
+        # KPI Row
+        (v_total, 8, 8), (v_errors, 8, 8), (v_sessions, 8, 8),
+        (v_urls, 8, 8), (v_high_sev, 8, 8), (v_critical, 8, 8),
+        # Overview
+        (v_timeline, 24, 14), (v_by_type, 12, 14), (v_by_severity, 12, 14),
+        # Error Analysis
+        (v_error_ts, 48, 12),
+        # Tables
+        (v_pivot_table, 48, 18),
+        (v_high_events, 48, 16),
+        (v_recent_events, 48, 20),
+        (v_last50_events, 48, 22),
     ]
 
-    all_vis  = [p[0] for p in panels]
+    all_vis = [p[0] for p in panels]
     dash = make_dashboard(
         "dashboard-main",
-        "Selenium Monitoring — Comprehensive Dashboard",
-        (
-            "Full visibility into all Selenium monitoring event types: "
-            "KPIs, timelines, JS errors, network requests, selector failures, "
-            "user interactions, navigation, DOM mutations, security events, "
-            "automation detection, framework errors, dialogs, keyboard actions, "
-            "element inspection, page idle detection, and transport health."
-        ),
+        "Selenium Monitoring Dashboard",
+        "Event overview, error analysis, and full event browser.",
         panels,
     )
     return all_vis + [dash]
@@ -1056,7 +764,7 @@ def configure_field_mappings():
                     "args":            {"type": "text"},
                     "errorThrown":     {"type": "keyword"},
                     "errorCode":       {"type": "keyword"},
-                    "reason":          {"type": "text"},
+                    "reason":          {"type": "keyword"},
                     "code":            {"type": "integer"},
                     "warning":         {"type": "keyword"},
 
@@ -1137,6 +845,7 @@ def configure_field_mappings():
 
                     # Additional fields
                     "pageUrl":           {"type": "keyword"},
+                    "app":               {"type": "keyword"},
                     "details":           {"type": "object"},
                     "text":              {"type": "text"},
                     "name":              {"type": "keyword"},
