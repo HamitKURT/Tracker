@@ -1,8 +1,8 @@
 /**
  * Include with:
- *   <script src="/observe.js"></script>
+ *   <script src="/performance.js"></script>
  *   — or —
- *   <script src="/observe.js" data-logserver="http://myserver:8084"></script>
+ *   <script src="/performance.js" data-logserver="http://myserver:8084"></script>
  */
 (function () {
     'use strict';
@@ -135,6 +135,7 @@
     var SESSION_ID = window.ENV_QA_SESSION_ID || generateId();
     var PAGE_ID = generateId();
     var PAGE_URL = location.href;
+    var APP_DOMAIN = location.origin + '/';
     var START_TIME = Date.now();
     var IS_AUTOMATED = false;
 
@@ -206,7 +207,8 @@
         sanitizedEvt.sessionId = SESSION_ID;
         sanitizedEvt.isAutomationDetected = IS_AUTOMATED;
         sanitizedEvt.pageUrl = sanitizedEvt._ctx.url; // Fix for empty Kibana tables
-        
+        sanitizedEvt.app = APP_DOMAIN;
+
         // NEW: Add summary field to all events
         sanitizedEvt.summary = generateSummary(sanitizedEvt);
 
@@ -312,6 +314,7 @@
             type: 'session-end',
             reason: event ? event.type : 'unknown',
             totalEventsInQueue: eventQueue.length,
+            url: sanitizeUrl(PAGE_URL),
             severity: 'low',
             _ctx: pageContext(),
             eventId: generateId(),
@@ -1410,6 +1413,7 @@
         enqueue({
             type: 'unhandled-rejection',
             message: sanitize(String(reason.message || reason), 'error', 500),
+            url: sanitizeUrl(PAGE_URL),
             severity: 'high'
         });
     });

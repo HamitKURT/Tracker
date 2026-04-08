@@ -259,14 +259,20 @@ def run_error_test_suite():
             """)
         print("[ERROR] Failed fetch requests: 5 times")
         
-        # Slow XHR (will be tracked as slow)
+        # Slow XHR (will be tracked as slow — exceeds 5000ms threshold)
         driver.execute_script("""
             var xhr = new XMLHttpRequest();
-            xhr.open('GET', 'https://httpbin.org/delay/3');
+            xhr.open('GET', '/api/slow-response');
             xhr.send();
         """)
-        print("[WARNING] Slow XHR request initiated")
-        
+        print("[WARNING] Slow XHR request initiated (6s endpoint)")
+
+        # Slow Fetch (will be tracked as slow)
+        driver.execute_script("""
+            fetch('/api/slow-response').then(function(r) { return r.text(); });
+        """)
+        print("[WARNING] Slow Fetch request initiated (6s endpoint)")
+
         # XHR with timeout
         driver.execute_script("""
             var xhr = new XMLHttpRequest();
@@ -275,8 +281,9 @@ def run_error_test_suite():
             xhr.send();
         """)
         print("[ERROR] XHR timeout scenario")
-        
-        time.sleep(2)
+
+        # Wait for slow responses to complete and be tracked
+        time.sleep(8)
         
         # =========================================================================
         # SECTION 8: XHR ISSUE EVENTS (errors, slow responses)
@@ -633,16 +640,32 @@ def run_error_test_suite():
         print("SECTION 18: CSP VIOLATIONS (csp-violation)")
         print("=" * 70)
         
-        # Create script that would violate CSP
+        # Load external font (blocked by font-src 'none' CSP)
+        driver.execute_script("""
+            var link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = 'https://fonts.googleapis.com/css?family=Roboto';
+            document.head.appendChild(link);
+        """)
+        print("[WARNING] External font load attempted (CSP font-src 'none' blocks it)")
+
+        # Load iframe (blocked by frame-src 'none' CSP)
+        driver.execute_script("""
+            var iframe = document.createElement('iframe');
+            iframe.src = 'https://example.com';
+            document.body.appendChild(iframe);
+        """)
+        print("[WARNING] External iframe load attempted (CSP frame-src 'none' blocks it)")
+
+        # Load external script (blocked by script-src CSP)
         driver.execute_script("""
             var script = document.createElement('script');
-            script.textContent = 'console.log("Inline script executed");';
-            // Note: This won't execute if CSP blocks it, but the attempt is logged
-            // In test environment, CSP may not be enabled
+            script.src = 'https://cdn.example.com/malicious.js';
+            document.head.appendChild(script);
         """)
-        print("[WARNING] Script injection attempted")
-        
-        time.sleep(0.5)
+        print("[WARNING] External script load attempted (CSP blocks it)")
+
+        time.sleep(1)
         
         # =========================================================================
         # SECTION 19: WEBSOCKET ERRORS
@@ -1530,6 +1553,154 @@ def run_error_test_suite():
         time.sleep(1)
 
         # =========================================================================
+        # SECTION 46: FRAMEWORK ERROR SIMULATION (React / Angular / Vue)
+        # =========================================================================
+        print("\n" + "=" * 70)
+        print("SECTION 46: FRAMEWORK ERROR SIMULATION")
+        print("=" * 70)
+
+        # Inject fake framework globals before page reload so performance.js
+        # detects them and activates framework-specific error hooks
+        driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+            'source': """
+                // Fake React DevTools hook with renderers so detection triggers
+                window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+                    renderers: new Map([[1, { version: '18.2.0-test' }]]),
+                    onCommitFiberRoot: function() {},
+                    onCommitFiberUnmount: function() {},
+                    supportsFiber: true
+                };
+
+                // Fake Angular ng global so detection triggers
+                window.ng = { getComponent: function() { return null; } };
+
+                // Fake Vue 3 global so detection triggers
+                window.__VUE__ = {
+                    createApp: function(opts) {
+                        return {
+                            config: { errorHandler: null, warnHandler: null },
+                            mount: function() {},
+                            use: function() { return this; }
+                        };
+                    }
+                };
+            """
+        })
+        print("[INFO] Injected fake framework globals for detection")
+
+        # Reload page so performance.js detects frameworks on init
+        driver.get(web_app_url)
+        time.sleep(3)
+        print("[INFO] Page reloaded with framework globals — detection should fire")
+
+        # --- React errors: trigger via console.error with React-specific patterns ---
+        driver.execute_script("""
+            console.error('The above error occurred in the <UserProfile> component');
+        """)
+        print("[ERROR] React render error simulated via console.error pattern")
+        time.sleep(0.3)
+
+        driver.execute_script("""
+            console.error('Hydration failed because the initial UI does not match what was rendered on the server. Content did not match.');
+        """)
+        print("[ERROR] React hydration mismatch simulated")
+        time.sleep(0.3)
+
+        driver.execute_script("""
+            console.error('Each child in a list should have a unique "key" prop.');
+        """)
+        print("[WARNING] React key warning simulated")
+        time.sleep(0.3)
+
+        # --- Angular errors: trigger via console.error with NG error codes ---
+        driver.execute_script("""
+            console.error('NG0100: ExpressionChangedAfterItHasBeenCheckedError: Expression has changed after it was checked.');
+        """)
+        print("[ERROR] Angular framework error (NG0100) simulated")
+        time.sleep(0.3)
+
+        driver.execute_script("""
+            console.error('NG0200: Circular dependency in DI detected for InjectionToken.');
+        """)
+        print("[ERROR] Angular framework error (NG0200) simulated")
+        time.sleep(0.3)
+
+        driver.execute_script("""
+            console.error('ExpressionChangedAfterItHasBeenCheckedError: Previous value was true, current value is false.');
+        """)
+        print("[ERROR] Angular change detection error simulated")
+        time.sleep(0.3)
+
+        # --- Vue errors: trigger via the Vue error/warn handlers if hooked ---
+        # Vue hooks are set on createApp().config — since we faked createApp,
+        # we call it and trigger the error handler
+        driver.execute_script("""
+            try {
+                if (window.__VUE__ && window.__VUE__.createApp) {
+                    var app = window.__VUE__.createApp({});
+                    if (app.config && app.config.errorHandler) {
+                        app.config.errorHandler(
+                            new Error('Vue test render error in computed property'),
+                            { $: { type: { __name: 'TestComponent' } } },
+                            'render function'
+                        );
+                    }
+                    if (app.config && app.config.warnHandler) {
+                        app.config.warnHandler(
+                            'Component is missing template or render function',
+                            { $: { type: { __name: 'BrokenWidget' } } },
+                            'Component render'
+                        );
+                    }
+                }
+            } catch(e) { console.log('Vue error simulation fallback:', e); }
+        """)
+        print("[ERROR] Vue error and warning simulated via hooked handlers")
+
+        time.sleep(1)
+
+        # =========================================================================
+        # SECTION 47: QUEUE OVERFLOW (queue-overflow)
+        # =========================================================================
+        print("\n" + "=" * 70)
+        print("SECTION 47: QUEUE OVERFLOW (queue-overflow)")
+        print("=" * 70)
+
+        # Generate 600+ events rapidly to exceed MAX_QUEUE_SIZE (500)
+        # console.error calls will each generate a console-error event
+        driver.execute_script("""
+            for (var i = 0; i < 620; i++) {
+                console.error('Overflow stress test event #' + i);
+            }
+        """)
+        print("[WARNING] Fired 620 rapid console.error calls to trigger queue overflow")
+        time.sleep(3)
+
+        # =========================================================================
+        # SECTION 48: SESSION END (session-end)
+        # =========================================================================
+        print("\n" + "=" * 70)
+        print("SECTION 48: SESSION END (session-end)")
+        print("=" * 70)
+
+        # Dispatch pagehide event to trigger session-end
+        driver.execute_script("""
+            window.dispatchEvent(new Event('pagehide'));
+        """)
+        print("[INFO] Dispatched pagehide event to trigger session-end")
+        time.sleep(1)
+
+        # Navigate away to also trigger beforeunload/pagehide naturally
+        driver.get("about:blank")
+        time.sleep(1)
+        print("[INFO] Navigated to about:blank — session ended")
+
+        # Navigate back for final flush
+        driver.get(web_app_url)
+        time.sleep(2)
+        print("[INFO] Navigated back for final event flush")
+
+        # =========================================================================
         # FINAL SUMMARY
         # =========================================================================
         print("\n" + "=" * 70)
@@ -1545,8 +1716,10 @@ def run_error_test_suite():
         print("  - unhandled-rejection: 4 rejections")
         print("  - xhr-error: 5 failed XHR requests")
         print("  - xhr-success: 2 successful XHR requests")
+        print("  - xhr-slow: 1 slow XHR request (6s endpoint)")
         print("  - fetch-error: 5 failed fetch requests")
         print("  - fetch-success: 3 successful fetch requests")
+        print("  - fetch-slow: 1 slow fetch request (6s endpoint)")
         print("  - rapid-clicks: 25 rapid clicks")
         print("  - dom-mutations: 60+ element mutations (table/list ops)")
         print("  - dom-attribute-changes: 10+ attribute modifications")
@@ -1571,6 +1744,16 @@ def run_error_test_suite():
         print("  - page-load: automatic on each page load")
         print("  - hashchange/pushState/replaceState: navigation events")
         print("  - automation-detected: automatic on page load")
+        print("  - csp-violation: 3 CSP violations (font, iframe, script)")
+        print("  - react-render-error: 1 simulated via console pattern")
+        print("  - react-hydration-mismatch: 1 simulated via console pattern")
+        print("  - react-key-warning: 1 simulated via console pattern")
+        print("  - angular-framework-error: 2 simulated (NG0100, NG0200)")
+        print("  - angular-change-detection-error: 1 simulated")
+        print("  - vue-error: 1 simulated via hooked handler")
+        print("  - vue-warning: 1 simulated via hooked handler")
+        print("  - queue-overflow: 1 triggered via 620 rapid events")
+        print("  - session-end: 1 via pagehide + navigation")
         print("\nCheck Kibana QA Monitor Dashboard for all events!")
         print("=" * 70)
         
