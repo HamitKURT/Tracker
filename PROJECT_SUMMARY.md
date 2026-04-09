@@ -4,8 +4,6 @@
 
 A comprehensive browser telemetry and QA monitoring pipeline that captures events from web applications via an injected JavaScript tracker, routes them through a message queue, indexes them in Elasticsearch, and visualizes them in Kibana dashboards.
 
-Designed for **Locked Shields 2026** exercise to monitor Selenium-driven automated tests and detect anomalies, errors, and automation patterns in real time.
-
 ---
 
 ## Architecture
