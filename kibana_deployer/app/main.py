@@ -17,6 +17,13 @@ ELASTIC_USERNAME = os.getenv("ELASTIC_USERNAME", "elastic")
 ELASTIC_PASSWORD = os.getenv("ELASTIC_PASSWORD", "changeme")
 KIBANA_SYSTEM_PASSWORD = os.getenv("KIBANA_PASSWORD", "changeme")
 
+ELASTIC_INDEX    = os.getenv("ELASTIC_INDEX", "selenium-events")
+ILM_MAX_SIZE     = os.getenv("ILM_MAX_SIZE", "1gb")
+ILM_MAX_AGE      = os.getenv("ILM_MAX_AGE", "7d")
+ILM_MAX_DOCS     = int(os.getenv("ILM_MAX_DOCS", 5000000))
+ILM_DELETE_AFTER  = os.getenv("ILM_DELETE_AFTER", "30d")
+ILM_POLICY_NAME  = f"{ELASTIC_INDEX}-policy"
+
 if not KIBANA_SYSTEM_PASSWORD:
     raise ValueError("KIBANA_PASSWORD environment variable is required")
 
@@ -59,6 +66,200 @@ def wait_for_elasticsearch():
 def mark_elastic_ready():
     with open("/tmp/elastic_ready", "w") as f:
         f.write("ok")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ILM (Index Lifecycle Management) setup
+# ─────────────────────────────────────────────────────────────────────────────
+
+def create_ilm_policy():
+    """Create the ILM policy for automatic index rollover and deletion."""
+    logger.info(f"[ES] Creating ILM policy '{ILM_POLICY_NAME}'...")
+    policy = {
+        "policy": {
+            "phases": {
+                "hot": {
+                    "actions": {
+                        "rollover": {
+                            "max_size": ILM_MAX_SIZE,
+                            "max_age": ILM_MAX_AGE,
+                            "max_docs": ILM_MAX_DOCS,
+                        }
+                    }
+                },
+                "delete": {
+                    "min_age": ILM_DELETE_AFTER,
+                    "actions": {
+                        "delete": {}
+                    }
+                }
+            }
+        }
+    }
+    try:
+        res = requests.put(
+            f"{ELASTIC_URL}/_ilm/policy/{ILM_POLICY_NAME}",
+            auth=(ELASTIC_USERNAME, ELASTIC_PASSWORD),
+            json=policy,
+            headers={"Content-Type": "application/json"},
+        )
+        if res.status_code in (200, 201):
+            logger.info(f"[ES] ILM policy '{ILM_POLICY_NAME}' created successfully "
+                        f"(rollover: size={ILM_MAX_SIZE}, age={ILM_MAX_AGE}, docs={ILM_MAX_DOCS}, "
+                        f"delete_after={ILM_DELETE_AFTER})")
+        else:
+            logger.error(f"[ES] Failed to create ILM policy: {res.status_code} - {res.text}")
+    except Exception as e:
+        logger.error(f"[ES] Error creating ILM policy: {e}")
+
+
+def _is_concrete_index(name):
+    """Return True if name exists as a concrete index (not an alias)."""
+    try:
+        res = requests.get(
+            f"{ELASTIC_URL}/{name}",
+            auth=(ELASTIC_USERNAME, ELASTIC_PASSWORD),
+            timeout=5,
+        )
+        if res.status_code != 200:
+            return False
+        index_data = res.json()
+        return name in index_data
+    except Exception:
+        return False
+
+
+def _is_alias(name):
+    """Return True if name is an alias."""
+    try:
+        res = requests.get(
+            f"{ELASTIC_URL}/_alias/{name}",
+            auth=(ELASTIC_USERNAME, ELASTIC_PASSWORD),
+            timeout=5,
+        )
+        return res.status_code == 200
+    except Exception:
+        return False
+
+
+def migrate_existing_index():
+    """Handle migration from a concrete index to rollover alias scheme."""
+    if _is_alias(ELASTIC_INDEX):
+        logger.info(f"[ES] '{ELASTIC_INDEX}' is already an alias — no migration needed.")
+        return
+
+    if not _is_concrete_index(ELASTIC_INDEX):
+        logger.info(f"[ES] '{ELASTIC_INDEX}' does not exist — fresh deployment, no migration needed.")
+        return
+
+    first_index = f"{ELASTIC_INDEX}-000001"
+    logger.info(f"[ES] '{ELASTIC_INDEX}' is a concrete index — migrating to rollover scheme...")
+
+    # Check if there are documents to migrate
+    try:
+        count_res = requests.get(
+            f"{ELASTIC_URL}/{ELASTIC_INDEX}/_count",
+            auth=(ELASTIC_USERNAME, ELASTIC_PASSWORD),
+            timeout=10,
+        )
+        doc_count = count_res.json().get("count", 0) if count_res.status_code == 200 else 0
+    except Exception:
+        doc_count = 0
+
+    if doc_count > 0:
+        logger.info(f"[ES] Reindexing {doc_count} documents from '{ELASTIC_INDEX}' to '{first_index}'...")
+        reindex_res = requests.post(
+            f"{ELASTIC_URL}/_reindex",
+            auth=(ELASTIC_USERNAME, ELASTIC_PASSWORD),
+            json={
+                "source": {"index": ELASTIC_INDEX},
+                "dest": {"index": first_index},
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=600,
+        )
+        if reindex_res.status_code != 200:
+            logger.error(f"[ES] Reindex failed: {reindex_res.status_code} - {reindex_res.text}")
+            return
+        result = reindex_res.json()
+        logger.info(f"[ES] Reindex complete: {result.get('total', 0)} documents processed.")
+    else:
+        logger.info(f"[ES] No documents in '{ELASTIC_INDEX}', skipping reindex.")
+
+    # Delete the concrete index
+    logger.info(f"[ES] Deleting concrete index '{ELASTIC_INDEX}'...")
+    del_res = requests.delete(
+        f"{ELASTIC_URL}/{ELASTIC_INDEX}",
+        auth=(ELASTIC_USERNAME, ELASTIC_PASSWORD),
+        timeout=30,
+    )
+    if del_res.status_code not in (200, 204):
+        logger.error(f"[ES] Failed to delete concrete index: {del_res.status_code} - {del_res.text}")
+        return
+
+    # Add write alias to the new index
+    if doc_count > 0:
+        logger.info(f"[ES] Adding write alias '{ELASTIC_INDEX}' to '{first_index}'...")
+        alias_res = requests.post(
+            f"{ELASTIC_URL}/_aliases",
+            auth=(ELASTIC_USERNAME, ELASTIC_PASSWORD),
+            json={
+                "actions": [
+                    {"add": {"index": first_index, "alias": ELASTIC_INDEX, "is_write_index": True}}
+                ]
+            },
+            headers={"Content-Type": "application/json"},
+        )
+        if alias_res.status_code == 200:
+            logger.info(f"[ES] Migration complete — '{ELASTIC_INDEX}' is now a write alias.")
+        else:
+            logger.error(f"[ES] Failed to create alias: {alias_res.status_code} - {alias_res.text}")
+
+    logger.info("[ES] Migration finished.")
+
+
+def bootstrap_rollover_index():
+    """Create the first rollover index with write alias if it doesn't exist."""
+    if _is_alias(ELASTIC_INDEX):
+        logger.info(f"[ES] Write alias '{ELASTIC_INDEX}' already exists, skipping bootstrap.")
+        return
+
+    first_index = f"{ELASTIC_INDEX}-000001"
+    logger.info(f"[ES] Bootstrapping rollover index '{first_index}' with write alias '{ELASTIC_INDEX}'...")
+
+    try:
+        res = requests.put(
+            f"{ELASTIC_URL}/{first_index}",
+            auth=(ELASTIC_USERNAME, ELASTIC_PASSWORD),
+            json={
+                "aliases": {
+                    ELASTIC_INDEX: {"is_write_index": True}
+                }
+            },
+            headers={"Content-Type": "application/json"},
+        )
+        if res.status_code in (200, 201):
+            logger.info(f"[ES] Rollover index '{first_index}' created with write alias '{ELASTIC_INDEX}'.")
+        elif res.status_code == 400 and "already exists" in res.text:
+            logger.info(f"[ES] Index '{first_index}' already exists, adding alias...")
+            alias_res = requests.post(
+                f"{ELASTIC_URL}/_aliases",
+                auth=(ELASTIC_USERNAME, ELASTIC_PASSWORD),
+                json={
+                    "actions": [
+                        {"add": {"index": first_index, "alias": ELASTIC_INDEX, "is_write_index": True}}
+                    ]
+                },
+                headers={"Content-Type": "application/json"},
+            )
+            if alias_res.status_code == 200:
+                logger.info(f"[ES] Write alias '{ELASTIC_INDEX}' added to '{first_index}'.")
+            else:
+                logger.error(f"[ES] Failed to add alias: {alias_res.status_code} - {alias_res.text}")
+        else:
+            logger.error(f"[ES] Failed to bootstrap: {res.status_code} - {res.text}")
+    except Exception as e:
+        logger.error(f"[ES] Error bootstrapping rollover index: {e}")
 
 
 def configure_kibana_system():
@@ -253,22 +454,25 @@ def date_histogram_col(interval="auto"):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def xy_visualization(layer_id, x_col_id, y_col_ids, series_type="bar_stacked",
-                     title_x="Time", title_y="Count"):
+                     title_x="Time", title_y="Count", split_col_id=None):
     accessors = y_col_ids if isinstance(y_col_ids, list) else [y_col_ids]
+    layer_config = {
+        "accessors": accessors,
+        "layerId": layer_id,
+        "layerType": "data",
+        "position": "top",
+        "seriesType": series_type,
+        "showGridlines": True,
+        "xAccessor": x_col_id,
+    }
+    if split_col_id:
+        layer_config["splitAccessor"] = split_col_id
     return {
         "axisTitlesVisibilitySettings": {"x": True, "yLeft": True, "yRight": False},
         "fittingFunction": "Linear",
         "gridlinesVisibilitySettings": {"x": True, "yLeft": True, "yRight": False},
         "labelsOrientation": {"x": 45, "yLeft": 0, "yRight": 0},
-        "layers": [{
-            "accessors": accessors,
-            "layerId": layer_id,
-            "layerType": "data",
-            "position": "top",
-            "seriesType": series_type,
-            "showGridlines": True,
-            "xAccessor": x_col_id,
-        }],
+        "layers": [layer_config],
         "legend": {"isVisible": True, "position": "right"},
         "preferredSeriesType": series_type,
         "tickLabelsVisibilitySettings": {"x": True, "yLeft": True, "yRight": False},
@@ -424,6 +628,20 @@ def build_xy_time(dv_id, vis_id, title, base_filter=None, series="bar_stacked", 
     layer = make_layer({cx: date_histogram_col(), cy: count_col()}, [cx, cy], lid)
     return lens_obj(vis_id, title, "lnsXY", lid, layer,
                     xy_visualization(lid, cx, cy, series), dv_id, base_filter, description)
+
+
+def build_xy_time_split(dv_id, vis_id, title, split_field, split_label=None,
+                        split_size=10, base_filter=None, series="line", description=""):
+    """XY time chart with one series per term value of split_field."""
+    lid = uid(); cx = uid(); cy = uid(); cs = uid()
+    if split_label is None:
+        split_label = split_field.split(".")[-1].capitalize()
+    layer = make_layer(
+        {cx: date_histogram_col(), cy: count_col(), cs: terms_col(split_label, split_field, cy, size=split_size)},
+        [cx, cs, cy], lid
+    )
+    return lens_obj(vis_id, title, "lnsXY", lid, layer,
+                    xy_visualization(lid, cx, cy, series, split_col_id=cs), dv_id, base_filter, description)
 
 
 def build_pie(dv_id, vis_id, title, field, base_filter=None, shape="donut", size=10, description=""):
@@ -605,6 +823,12 @@ def get_comprehensive_dashboard(dv_id):
     v_by_severity = build_pie(dv_id, "v_by_severity", "Events by Severity",
                               "severity", shape="donut")
 
+    v_app_timeline = build_xy_time_split(
+        dv_id, "v_app_timeline", "Events by App Over Time",
+        split_field="app", split_label="App",
+        split_size=10, series="line",
+        description="Line graph showing event count over time, one line per app")
+
     # ── 3. ERROR ANALYSIS ────────────────────────────────────────────────────
     v_error_ts    = build_xy_time(dv_id, "v_error_ts", "Errors Over Time",
                                   base_filter=type_filter(ALL_ERROR_TYPES),
@@ -657,6 +881,8 @@ def get_comprehensive_dashboard(dv_id):
         (v_urls, 8, 8), (v_high_sev, 8, 8), (v_critical, 8, 8),
         # Overview
         (v_timeline, 24, 14), (v_by_type, 12, 14), (v_by_severity, 12, 14),
+        # App timeline
+        (v_app_timeline, 48, 14),
         # Error Analysis
         (v_error_ts, 48, 12),
         # Tables
@@ -690,6 +916,8 @@ def configure_field_mappings():
             "settings": {
                 "number_of_shards": 1,
                 "number_of_replicas": 0,
+                "index.lifecycle.name": ILM_POLICY_NAME,
+                "index.lifecycle.rollover_alias": ELASTIC_INDEX,
             },
             "mappings": {
                 "dynamic": "true",
@@ -951,9 +1179,6 @@ def build_and_deploy():
     # Clean slate — remove all old dashboards and lens visualizations
     delete_existing_saved_objects()
 
-    # Configure Elasticsearch field mappings
-    configure_field_mappings()
-
     # Deploy the single comprehensive dashboard
     dashboards = [
         ("Comprehensive Dashboard", get_comprehensive_dashboard),
@@ -974,6 +1199,13 @@ def build_and_deploy():
 
 if __name__ == "__main__":
     configure_kibana_system()
+
+    # ILM and rollover setup (order matters)
+    create_ilm_policy()
+    configure_field_mappings()
+    migrate_existing_index()
+    bootstrap_rollover_index()
+
     build_and_deploy()
 
     # Keep alive for docker
