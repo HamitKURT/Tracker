@@ -53,6 +53,11 @@ services:
       - ELASTIC_USERNAME=${ELASTIC_USERNAME}
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
       - KIBANA_PASSWORD=${KIBANA_SYSTEM_PASSWORD}
+      - ELASTIC_INDEX=${ELASTIC_INDEX:-selenium-events}
+      - ILM_MAX_SIZE=${ILM_MAX_SIZE:-1gb}
+      - ILM_MAX_AGE=${ILM_MAX_AGE:-7d}
+      - ILM_MAX_DOCS=${ILM_MAX_DOCS:-5000000}
+      - ILM_DELETE_AFTER=${ILM_DELETE_AFTER:-30d}
     depends_on:
       elasticsearch:
         condition: service_healthy
