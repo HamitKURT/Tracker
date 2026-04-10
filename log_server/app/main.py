@@ -9,7 +9,20 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app, supports_credentials=True)
+
+# CORS Configuration: Get allowed origins from environment
+# Use comma-separated list for multiple origins, or * for all (no credentials)
+cors_origins = os.getenv("CORS_ALLOWED_ORIGINS", "*")
+if cors_origins != "*":
+    cors_origins = [o.strip() for o in cors_origins.split(",")]
+
+CORS(app,
+     origins=cors_origins,
+     methods=["GET", "POST", "OPTIONS"],
+     allow_headers=["Content-Type"],
+     supports_credentials=(cors_origins != "*"))
+
+logger.info(f"CORS configured with origins: {cors_origins}")
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
