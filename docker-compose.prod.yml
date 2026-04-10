@@ -111,6 +111,7 @@ services:
       - REDIS_QUEUE_KEY=${REDIS_QUEUE_KEY}
       - PORT=${LOG_SERVER_PORT:-8084}
       - HOST=0.0.0.0
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-*}
     entrypoint: python3 /app/main.py
 
   log-worker:
